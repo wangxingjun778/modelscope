@@ -66,7 +66,7 @@ from modelscope.utils.repo_utils import (DATASET_LFS_SUFFIX,
                                          DEFAULT_IGNORE_PATTERNS,
                                          MODEL_LFS_SUFFIX, CommitInfo,
                                          CommitOperation, CommitOperationAdd,
-                                         RepoUtils)
+                                         CommitOperationDelete, RepoUtils)
 from modelscope.utils.thread_utils import thread_executor
 
 logger = get_logger()
@@ -1490,7 +1490,7 @@ class HubApi:
             opt._is_uploaded = is_uploaded
             operations.append(opt)
 
-        self.create_commit(
+        commit_info: CommitInfo = self.create_commit(
             repo_id=repo_id,
             operations=operations,
             commit_message=commit_message,
@@ -1499,13 +1499,43 @@ class HubApi:
             repo_type=repo_type,
         )
 
-        # Construct commit info
-        commit_url = f'{self.endpoint}/api/v1/{repo_type}s/{repo_id}/commit/{DEFAULT_REPOSITORY_REVISION}'
-        return CommitInfo(
-            commit_url=commit_url,
+        return commit_info
+
+    def delete_file(
+            self,
+            path_in_repo: str,
+            repo_id: str,
+            *,
+            token: Union[str, bool, None] = None,
+            repo_type: Optional[str] = None,
+            revision: Optional[str] = None,
+            commit_message: Optional[str] = None,
+            commit_description: Optional[str] = None,
+    ) -> CommitInfo:
+
+        commit_message = commit_message or f'Delete {path_in_repo} from {repo_id} on ModelScope hub'
+
+        if token:
+            self.login(access_token=token)
+
+        del_operation = CommitOperationDelete(
+            path_in_repo=path_in_repo,
+            is_folder=False,
+        )
+        operations = [del_operation]
+
+        # todo: to be completed
+        commit_info: CommitInfo = self.create_commit(
+            repo_id=repo_id,
+            operations=operations,
             commit_message=commit_message,
             commit_description=commit_description,
-            oid='')
+            token=token,
+            repo_type=repo_type,
+            revision=revision,  # todo: check if revision is needed
+        )
+
+        return commit_info
 
     def _upload_blob(
             self,
@@ -1719,7 +1749,7 @@ class HubApi:
             if isinstance(operation, CommitOperationAdd) and operation._upload_mode == 'normal':
 
                 commit_action = {
-                    'action': 'update' if operation._is_uploaded else 'create',
+                    'action': 'create',
                     'path': operation.path_in_repo,
                     'type': 'normal',
                     'size': operation.upload_info.size,
@@ -1733,13 +1763,22 @@ class HubApi:
             elif isinstance(operation, CommitOperationAdd) and operation._upload_mode == 'lfs':
 
                 commit_action = {
-                    'action': 'update' if operation._is_uploaded else 'create',
+                    'action': 'create',
                     'path': operation.path_in_repo,
                     'type': 'lfs',
                     'size': operation.upload_info.size,
                     'sha256': operation.upload_info.sha256,
                     'content': '',
                     'encoding': '',
+                }
+                payload['actions'].append(commit_action)
+
+            # TODO： to be implemented on the server side
+            elif isinstance(operation, CommitOperationDelete):
+                commit_action = {
+                    'action': 'delete',
+                    'path': operation.path_in_repo,
+                    'is_folder': operation.is_folder,
                 }
                 payload['actions'].append(commit_action)
 

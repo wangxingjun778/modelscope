@@ -362,6 +362,24 @@ class UploadInfo:
             sample=sample)
 
 
+def _validate_path_in_repo(path_in_repo: str) -> str:
+    # Validate `path_in_repo` value to prevent a server-side issue
+    if path_in_repo.startswith('/'):
+        path_in_repo = path_in_repo[1:]
+    if path_in_repo == '.' or path_in_repo == '..' or path_in_repo.startswith(
+            '../'):
+        raise ValueError(
+            f"Invalid `path_in_repo` in CommitOperation: '{path_in_repo}'")
+    if path_in_repo.startswith('./'):
+        path_in_repo = path_in_repo[2:]
+    for forbidden in FORBIDDEN_FOLDERS:
+        if any(part == forbidden for part in path_in_repo.split('/')):
+            raise ValueError(
+                f"Invalid `path_in_repo` in CommitOperation: cannot update files under a '{forbidden}/' folder (path:"
+                f" '{path_in_repo}').")
+    return path_in_repo
+
+
 @dataclass
 class CommitOperationAdd:
     """Data structure containing information about a file to be added to a commit."""
@@ -476,4 +494,36 @@ class CommitOperationAdd:
                 return git_hash(file.read())
 
 
-CommitOperation = Union[CommitOperationAdd, ]
+@dataclass
+class CommitOperationDelete:
+    """
+    Data structure holding necessary info to delete a file or a folder from a repository
+    on the Hub.
+
+    Args:
+        path_in_repo (`str`):
+            Relative filepath in the repo. For example:
+                "data/file.txt",
+                "data/test/"
+        is_folder (`bool` or `Literal["auto"]`, *optional*)
+            Whether the Delete Operation applies to a folder or not. If "auto", the path
+            type (file or folder) is guessed automatically by looking if path ends with
+            a "/" (folder) or not (file). To explicitly set the path type, you can set
+            `is_folder=True` or `is_folder=False`.
+    """
+
+    path_in_repo: str
+    is_folder: Union[bool, Literal['auto']] = 'auto'
+
+    def __post_init__(self):
+        self.path_in_repo = _validate_path_in_repo(self.path_in_repo)
+
+        if self.is_folder == 'auto':
+            self.is_folder = self.path_in_repo.endswith('/')
+        if not isinstance(self.is_folder, bool):
+            raise ValueError(
+                f"Wrong value for `is_folder`. Must be one of [`True`, `False`, `'auto'`]. Got '{self.is_folder}'."
+            )
+
+
+CommitOperation = Union[CommitOperationAdd, CommitOperationDelete]
