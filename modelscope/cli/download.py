@@ -177,3 +177,23 @@ class DownloadCMD(CLICommand):
                 )
         else:
             pass  # noop
+
+
+class TestArgs:
+
+    model = 'iic/nlp_gte_sentence-embedding_chinese-small'
+    files = ['pytorch_model.bin']
+    repo_id = None
+    local_dir = '/Users/jason/work/datasets_work/temp/qwen_model'
+
+    repo_type = 'model'
+    max_workers = 1
+    revision = None
+    cache_dir = None
+    include = None
+    exclude = None
+
+
+if __name__ == '__main__':
+    args = TestArgs()
+    DownloadCMD(args).execute()

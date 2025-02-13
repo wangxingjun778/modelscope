@@ -210,18 +210,23 @@ def _repo_file_download(
             revision=revision,
             recursive=True,
             use_cookies=False if cookies is None else cookies)
+        print(f">>repo_files: {repo_files}")   # TODO
+        print(f">>file_path: {file_path}")   # TODO
+
         for repo_file in repo_files:
             if repo_file['Type'] == 'tree':
                 continue
 
             if repo_file['Path'] == file_path:
                 if cache.exists(repo_file):
+                    print(f">>>1111 exists")
                     file_name = repo_file['Name']
                     logger.debug(
                         f'File {file_name} already in cache with identical hash, skip downloading!'
                     )
                     return cache.get_file_by_info(repo_file)
                 else:
+                    print(f">>>2222 not exists")
                     file_to_download_meta = repo_file
                 break
     elif repo_type == REPO_TYPE_DATASET:
