@@ -274,6 +274,7 @@ class ModelFileSystemCache(FileSystemCache):
         print(f">>exists_func: {model_file_info}")  # todo
         print(f">>exists_func file_path: {file_path}")  # todo
         print(f">>exists_func cache_file_path: {cache_file_path}")  # todo
+        print(f">>exists_func self.cached_files: {self.cached_files}")  # todo
         for cached_key in self.cached_files:
             if cached_key['Path'] == file_path and (
                     cached_key['Revision'].startswith(key['Revision'])
