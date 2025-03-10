@@ -1954,8 +1954,8 @@ class ModelScopeConfig:
 class UploadingCheck:
     def __init__(
             self,
-            max_file_count: int = 100_000,
-            max_file_count_in_dir: int = 10_000,
+            max_file_count: int = 150_000,   # todo: 100_000
+            max_file_count_in_dir: int = 80_000,  # todo: 10_000
             max_file_size: int = 50 * 1024 ** 3,
             size_threshold_to_enforce_lfs: int = 5 * 1024 * 1024,
             normal_file_size_total_limit: int = 500 * 1024 * 1024,
