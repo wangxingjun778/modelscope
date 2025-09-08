@@ -5,7 +5,6 @@ from collections import defaultdict
 
 import mcubes
 import numpy as np
-import tinycudann as tcnn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -166,6 +165,14 @@ def normalize(dat, inp_scale, tgt_scale):
 
 
 def cleanup():
+    try:
+        import tinycudann as tcnn
+    except ImportError as e:
+        raise ImportError(
+            'Cannot import tinycudann, please install by '
+            '`pip install git+https://github.com/NVlabs/tiny-cuda-nn/'
+            '#subdirectory=bindings/torc`') from e
+
     gc.collect()
     torch.cuda.empty_cache()
     tcnn.free_temporary_memory()

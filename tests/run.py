@@ -22,7 +22,7 @@ import pandas
 # NOTICE: Tensorflow 1.15 seems not so compatible with pytorch.
 #         A segmentation fault may be raise by pytorch cpp library
 #         if 'import tensorflow' in front of 'import torch'.
-#         Puting a 'import torch' here can bypass this incompatibility.
+#         Putting a 'import torch' here can bypass this incompatibility.
 import torch
 import yaml
 
@@ -259,7 +259,7 @@ def wait_for_workers(workers):
                 break
 
         if is_all_completed:
-            logger.info('All sub porcess is completed!')
+            logger.info('All sub process is completed!')
             break
         time.sleep(0.001)
 
@@ -589,6 +589,31 @@ def main(args):
             statistics_test_result(df)
 
 
+def patch_transformers_for_safe_models():
+    """Skip check_torch_load_is_safe checking in test cases, because these cases are running officially,
+        and does not contain malicious models.
+    """
+    try:
+
+        def check_torch_load_is_safe(*args, **kwargs):
+            pass
+
+        from transformers.utils import import_utils
+        from transformers import modeling_utils
+        modeling_utils.check_torch_load_is_safe = check_torch_load_is_safe
+        import_utils.check_torch_load_is_safe = check_torch_load_is_safe
+    except AttributeError or ImportError:
+        pass
+
+
+def hot_fix_transformers():
+    try:
+        from transformers import modeling_utils
+        modeling_utils.ALL_PARALLEL_STYLES = {}
+    except AttributeError or ImportError:
+        pass
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('test runner')
     parser.add_argument(
@@ -634,6 +659,8 @@ if __name__ == '__main__':
     set_test_level(args.level)
     os.environ['REGRESSION_BASELINE'] = '1'
     logger.info(f'TEST LEVEL: {test_level()}')
+    patch_transformers_for_safe_models()
+    hot_fix_transformers()
     if args.profile:
         from utils import profiler
         logger.info('enable profile ...')

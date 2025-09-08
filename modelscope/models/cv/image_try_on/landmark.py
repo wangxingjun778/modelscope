@@ -254,7 +254,7 @@ class LandmarkNet(nn.Module):
                         nn.init.constant_(m.bias, 0)
 
         if os.path.isfile(pretrained):
-            pretrained_state_dict = torch.load(pretrained)
+            pretrained_state_dict = torch.load(pretrained, weights_only=True)
             logger.info('=> loading pretrained model {}'.format(pretrained))
 
             need_init_state_dict = {}
@@ -369,7 +369,7 @@ class VTONLandmark(nn.Module):
                 'SHIFT_HEATMAP': True
             },
             'DEBUG': {
-                'DEBUG': True,
+                'DEBUG': False,
                 'SAVE_BATCH_IMAGES_GT': True,
                 'SAVE_BATCH_IMAGES_PRED': True,
                 'SAVE_HEATMAPS_GT': True,
@@ -417,7 +417,7 @@ class VTONLandmark(nn.Module):
                         nn.init.constant_(m.bias, 0)
 
         if os.path.isfile(pretrained):
-            pretrained_state_dict = torch.load(pretrained)
+            pretrained_state_dict = torch.load(pretrained, weights_only=True)
             logger.info('=> loading pretrained model {}'.format(pretrained))
 
             need_init_state_dict = {}

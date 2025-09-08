@@ -3,11 +3,13 @@
 # Copyright 2020 The HuggingFace Datasets Authors and the TensorFlow Datasets Authors.
 import importlib
 import contextlib
+import inspect
 import os
 import warnings
+from dataclasses import dataclass, field, fields
 from functools import partial
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union, Tuple, Literal
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union, Tuple, Literal, Any, ClassVar
 
 from urllib.parse import urlencode
 
@@ -15,11 +17,13 @@ import requests
 from datasets import (BuilderConfig, Dataset, DatasetBuilder, DatasetDict,
                       DownloadConfig, DownloadManager, DownloadMode, Features,
                       IterableDataset, IterableDatasetDict, Split,
-                      VerificationMode, Version, config, data_files)
+                      VerificationMode, Version, config, data_files, LargeList, Sequence as SequenceHf)
+from datasets.features import features
+from datasets.features.features import _FEATURE_TYPES
 from datasets.data_files import (
-    FILES_TO_IGNORE, DataFilesDict, DataFilesList, EmptyDatasetError,
+    FILES_TO_IGNORE, DataFilesDict, EmptyDatasetError,
     _get_data_files_patterns, _is_inside_unrequested_special_dir,
-    _is_unrequested_hidden_file_or_is_inside_unrequested_hidden_dir, get_metadata_patterns, sanitize_patterns)
+    _is_unrequested_hidden_file_or_is_inside_unrequested_hidden_dir, sanitize_patterns)
 from datasets.download.streaming_download_manager import (
     _prepare_path_and_storage_options, xbasename, xjoin)
 from datasets.exceptions import DataFilesNotFoundError, DatasetNotFoundError
@@ -37,7 +41,6 @@ from datasets.load import (
     init_dynamic_modules)
 from datasets.naming import camelcase_to_snakecase
 from datasets.packaged_modules import (_EXTENSION_TO_MODULE,
-                                       _MODULE_SUPPORTS_METADATA,
                                        _MODULE_TO_EXTENSIONS,
                                        _PACKAGED_DATASETS_MODULES)
 from datasets.utils import file_utils
@@ -49,6 +52,7 @@ from datasets.utils.info_utils import is_small_dataset
 from datasets.utils.metadata import MetadataConfigs
 from datasets.utils.py_utils import get_imports
 from datasets.utils.track import tracked_str
+
 from fsspec import filesystem
 from fsspec.core import _un_chain
 from fsspec.utils import stringify_path
@@ -62,7 +66,7 @@ from modelscope import HubApi
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.msdatasets.utils.hf_file_utils import get_from_cache_ms
 from modelscope.utils.config_ds import MS_DATASETS_CACHE
-from modelscope.utils.constant import DEFAULT_DATASET_NAMESPACE, DEFAULT_DATASET_REVISION
+from modelscope.utils.constant import DEFAULT_DATASET_REVISION, REPO_TYPE_DATASET
 from modelscope.utils.import_utils import has_attr_in_class
 from modelscope.utils.logger import get_logger
 
@@ -87,6 +91,76 @@ ExpandDatasetProperty_T = Literal[
     'sha',
     'tags',
 ]
+
+
+# Patch datasets features
+@dataclass(repr=False)
+class ListMs(SequenceHf):
+    """Feature type for large list data composed of child feature data type.
+
+    It is backed by `pyarrow.ListType`, which uses 32-bit offsets or a fixed length.
+
+    Args:
+        feature ([`FeatureType`]):
+            Child feature data type of each item within the large list.
+        length (optional `int`, default to -1):
+            Length of the list if it is fixed.
+            Defaults to -1 which means an arbitrary length.
+    """
+
+    feature: Any
+    length: int = -1
+    id: Optional[str] = field(default=None, repr=False)
+    # Automatically constructed
+    pa_type: ClassVar[Any] = None
+    _type: str = field(default='List', init=False, repr=False)
+
+    def __repr__(self):
+        if self.length != -1:
+            return f'{type(self).__name__}({self.feature}, length={self.length})'
+        else:
+            return f'{type(self).__name__}({self.feature})'
+
+
+_FEATURE_TYPES['List'] = ListMs
+
+
+def generate_from_dict_ms(obj: Any):
+    """Regenerate the nested feature object from a deserialized dict.
+    We use the '_type' fields to get the dataclass name to load.
+
+    generate_from_dict is the recursive helper for Features.from_dict, and allows for a convenient constructor syntax
+    to define features from deserialized JSON dictionaries. This function is used in particular when deserializing
+    a :class:`DatasetInfo` that was dumped to a JSON object. This acts as an analogue to
+    :meth:`Features.from_arrow_schema` and handles the recursive field-by-field instantiation, but doesn't require any
+    mapping to/from pyarrow, except for the fact that it takes advantage of the mapping of pyarrow primitive dtypes
+    that :class:`Value` automatically performs.
+    """
+    # Nested structures: we allow dict, list/tuples, sequences
+    if isinstance(obj, list):
+        return [generate_from_dict_ms(value) for value in obj]
+    # Otherwise we have a dict or a dataclass
+    if '_type' not in obj or isinstance(obj['_type'], dict):
+        return {key: generate_from_dict_ms(value) for key, value in obj.items()}
+    obj = dict(obj)
+    _type = obj.pop('_type')
+    class_type = _FEATURE_TYPES.get(_type, None) or globals().get(_type, None)
+
+    if class_type is None:
+        raise ValueError(f"Feature type '{_type}' not found. Available feature types: {list(_FEATURE_TYPES.keys())}")
+
+    if class_type == LargeList:
+        feature = obj.pop('feature')
+        return LargeList(generate_from_dict_ms(feature), **obj)
+    if class_type == ListMs:
+        feature = obj.pop('feature')
+        return ListMs(generate_from_dict_ms(feature), **obj)
+    if class_type == SequenceHf:  # backward compatibility, this translates to a List or a dict
+        feature = obj.pop('feature')
+        return SequenceHf(feature=generate_from_dict_ms(feature), **obj)
+
+    field_names = {f.name for f in fields(class_type)}
+    return class_type(**{k: v for k, v in obj.items() if k in field_names})
 
 
 def _download_ms(self, url_or_filename: str, download_config: DownloadConfig) -> str:
@@ -158,53 +232,46 @@ def _dataset_info(
 
     </Tip>
     """
-    _api = HubApi()
-    _namespace, _dataset_name = repo_id.split('/')
-    dataset_hub_id, dataset_type = _api.get_dataset_id_and_type(
-        dataset_name=_dataset_name, namespace=_namespace)
+    # Note: refer to `_list_repo_tree()`, for patching `HfApi.list_repo_tree`
+    repo_info_iter = self.list_repo_tree(
+        repo_id=repo_id,
+        path_in_repo='/',
+        revision=revision,
+        recursive=False,
+        expand=expand,
+        token=token,
+        repo_type=REPO_TYPE_DATASET,
+    )
 
-    revision: str = revision or DEFAULT_DATASET_REVISION
-    data = _api.get_dataset_infos(dataset_hub_id=dataset_hub_id,
-                                  revision=revision,
-                                  files_metadata=files_metadata,
-                                  timeout=timeout)
-
-    # Parse data
-    data_d: dict = data['Data']
-    data_file_list: list = data_d['Files']
-    # commit_info: dict = data_d['LatestCommitter']
-
-    # Update data   # TODO: columns align with HfDatasetInfo
-    data['id'] = repo_id
-    data['private'] = False
-    data['author'] = repo_id.split('/')[0] if repo_id else None
-    data['sha'] = revision
-    data['lastModified'] = None
-    data['gated'] = False
-    data['disabled'] = False
-    data['downloads'] = 0
-    data['likes'] = 0
-    data['tags'] = []
-    data['cardData'] = []
-    data['createdAt'] = None
+    # Update data_info
+    data_info = dict({})
+    data_info['id'] = repo_id
+    data_info['private'] = False
+    data_info['author'] = repo_id.split('/')[0] if repo_id else None
+    data_info['sha'] = revision
+    data_info['lastModified'] = None
+    data_info['gated'] = False
+    data_info['disabled'] = False
+    data_info['downloads'] = 0
+    data_info['likes'] = 0
+    data_info['tags'] = []
+    data_info['cardData'] = []
+    data_info['createdAt'] = None
 
     # e.g. {'rfilename': 'xxx', 'blobId': 'xxx', 'size': 0, 'lfs': {'size': 0, 'sha256': 'xxx', 'pointerSize': 0}}
-    data['siblings'] = []
-    for file_info_d in data_file_list:
-        file_info = {
-            'rfilename': file_info_d['Path'],
-            'blobId': file_info_d['Id'],
-            'size': file_info_d['Size'],
-            'type': 'directory' if file_info_d['Type'] == 'tree' else 'file',
-            'lfs': {
-                'size': file_info_d['Size'],
-                'sha256': file_info_d['Sha256'],
-                'pointerSize': 0
-            }
-        }
-        data['siblings'].append(file_info)
+    data_siblings = []
+    for info_item in repo_info_iter:
+        if isinstance(info_item, RepoFile):
+            data_siblings.append(
+                dict(
+                    rfilename=info_item.rfilename,
+                    blobId=info_item.blob_id,
+                    size=info_item.size,
+                )
+            )
+    data_info['siblings'] = data_siblings
 
-    return HfDatasetInfo(**data)
+    return HfDatasetInfo(**data_info)
 
 
 def _list_repo_tree(
@@ -220,35 +287,28 @@ def _list_repo_tree(
 ) -> Iterable[Union[RepoFile, RepoFolder]]:
 
     _api = HubApi(timeout=3 * 60, max_retries=3)
+    endpoint = _api.get_endpoint_for_read(
+        repo_id=repo_id, repo_type=REPO_TYPE_DATASET)
 
-    if is_relative_path(repo_id) and repo_id.count('/') == 1:
-        _namespace, _dataset_name = repo_id.split('/')
-    elif is_relative_path(repo_id) and repo_id.count('/') == 0:
-        logger.warning(f'Got a relative path: {repo_id} without namespace, '
-                       f'Use default namespace: {DEFAULT_DATASET_NAMESPACE}')
-        _namespace, _dataset_name = DEFAULT_DATASET_NAMESPACE, repo_id
-    else:
-        raise ValueError(f'Invalid repo_id: {repo_id} !')
-
+    # List all files in the repo
     page_number = 1
     page_size = 100
     while True:
-        data: dict = _api.list_repo_tree(dataset_name=_dataset_name,
-                                         namespace=_namespace,
-                                         revision=revision or DEFAULT_DATASET_REVISION,
-                                         root_path=path_in_repo or None,
-                                         recursive=True,
-                                         page_number=page_number,
-                                         page_size=page_size,
-                                         )
-        if not ('Code' in data and data['Code'] == 200):
-            logger.error(f'Get dataset: {repo_id} file list failed, message: {data["Message"]}')
-            return None
+        try:
+            dataset_files = _api.get_dataset_files(
+                repo_id=repo_id,
+                revision=revision or DEFAULT_DATASET_REVISION,
+                root_path=path_in_repo or '/',
+                recursive=recursive,
+                page_number=page_number,
+                page_size=page_size,
+                endpoint=endpoint,
+            )
+        except Exception as e:
+            logger.error(f'Get dataset: {repo_id} file list failed, message: {e}')
+            break
 
-        # Parse data (Type: 'tree' or 'blob')
-        data_file_list: list = data['Data']['Files']
-
-        for file_info_d in data_file_list:
+        for file_info_d in dataset_files:
             path_info = {}
             path_info['type'] = 'directory' if file_info_d['Type'] == 'tree' else 'file'
             path_info['path'] = file_info_d['Path']
@@ -257,7 +317,7 @@ def _list_repo_tree(
 
             yield RepoFile(**path_info) if path_info['type'] == 'file' else RepoFolder(**path_info)
 
-        if len(data_file_list) < page_size:
+        if len(dataset_files) < page_size:
             break
         page_number += 1
 
@@ -273,34 +333,24 @@ def _get_paths_info(
     token: Optional[Union[bool, str]] = None,
 ) -> List[Union[RepoFile, RepoFolder]]:
 
-    _api = HubApi()
-    _namespace, _dataset_name = repo_id.split('/')
-    dataset_hub_id, dataset_type = _api.get_dataset_id_and_type(
-        dataset_name=_dataset_name, namespace=_namespace)
+    # Refer to func: `_list_repo_tree()`, for patching `HfApi.list_repo_tree`
+    repo_info_iter = self.list_repo_tree(
+        repo_id=repo_id,
+        recursive=False,
+        expand=expand,
+        revision=revision,
+        repo_type=repo_type,
+        token=token,
+    )
 
-    revision: str = revision or DEFAULT_DATASET_REVISION
-    data = _api.get_dataset_infos(dataset_hub_id=dataset_hub_id,
-                                  revision=revision,
-                                  files_metadata=False,
-                                  recursive='False')
-    data_d: dict = data['Data']
-    data_file_list: list = data_d['Files']
-
-    return [
-        RepoFile(path=item_d['Name'],
-                 size=item_d['Size'],
-                 oid=item_d['Revision'],
-                 lfs=None,           # TODO: lfs type to be supported
-                 last_commit=None,   # TODO: lfs type to be supported
-                 security=None
-                 ) for item_d in data_file_list if item_d['Name'] == 'README.md'
-    ]
+    return [item_info for item_info in repo_info_iter]
 
 
 def _download_repo_file(repo_id: str, path_in_repo: str, download_config: DownloadConfig, revision: str):
     _api = HubApi()
     _namespace, _dataset_name = repo_id.split('/')
-
+    endpoint = _api.get_endpoint_for_read(
+        repo_id=repo_id, repo_type=REPO_TYPE_DATASET)
     if download_config and download_config.download_desc is None:
         download_config.download_desc = f'Downloading [{path_in_repo}]'
     try:
@@ -310,6 +360,7 @@ def _download_repo_file(repo_id: str, path_in_repo: str, download_config: Downlo
             namespace=_namespace,
             revision=revision,
             extension_filter=False,
+            endpoint=endpoint
         )
         repo_file_path = cached_path(
             url_or_filename=url_or_filename, download_config=download_config)
@@ -378,7 +429,7 @@ def _resolve_pattern(
 
     Hidden files and directories (i.e. whose names start with a dot) are ignored, unless they are explicitly requested.
     The same applies to special directories that start with a double underscore like "__pycache__".
-    You can still include one if the pattern explicilty mentions it:
+    You can still include one if the pattern explicitly mentions it:
     - to include a hidden file: "*/.hidden.txt" or "*/.*"
     - to include a hidden directory: ".hidden/*" or ".*/*"
     - to include a special directory: "__special__/*" or "__*/*"
@@ -616,38 +667,29 @@ def get_module_without_script(self) -> DatasetModule:
         path=self.name,
         download_config=self.download_config,
     )
-    data_files = data_files.filter_extensions(
-        _MODULE_TO_EXTENSIONS[module_name])
-    # Collect metadata files if the module supports them
-    supports_metadata = module_name in _MODULE_SUPPORTS_METADATA
-    if self.data_files is None and supports_metadata:
-        try:
-            metadata_patterns = get_metadata_patterns(
-                base_path, download_config=self.download_config)
-        except FileNotFoundError:
-            metadata_patterns = None
-        if metadata_patterns is not None:
-            metadata_data_files_list = DataFilesList.from_patterns(
-                metadata_patterns,
-                download_config=self.download_config,
-                base_path=base_path)
-            if metadata_data_files_list:
-                data_files = DataFilesDict({
-                    split: data_files_list + metadata_data_files_list
-                    for split, data_files_list in data_files.items()
-                })
+
+    if hasattr(data_files, 'filter'):
+        data_files = data_files.filter(extensions=_MODULE_TO_EXTENSIONS[module_name])
+    else:
+        data_files = data_files.filter_extensions(_MODULE_TO_EXTENSIONS[module_name])
 
     module_path, _ = _PACKAGED_DATASETS_MODULES[module_name]
 
     if metadata_configs:
-        builder_configs, default_config_name = create_builder_configs_from_metadata_configs(
-            module_path,
-            metadata_configs,
-            base_path=base_path,
-            supports_metadata=supports_metadata,
-            default_builder_kwargs=default_builder_kwargs,
-            download_config=self.download_config,
-        )
+
+        supports_metadata = module_name in {'imagefolder', 'audiofolder'}
+        create_builder_signature = inspect.signature(create_builder_configs_from_metadata_configs)
+        in_args = {
+            'module_path': module_path,
+            'metadata_configs': metadata_configs,
+            'base_path': base_path,
+            'default_builder_kwargs': default_builder_kwargs,
+            'download_config': self.download_config,
+        }
+        if 'supports_metadata' in create_builder_signature.parameters:
+            in_args['supports_metadata'] = supports_metadata
+
+        builder_configs, default_config_name = create_builder_configs_from_metadata_configs(**in_args)
     else:
         builder_configs: List[BuilderConfig] = [
             import_main_class(module_path).BUILDER_CONFIG_CLASS(
@@ -656,10 +698,14 @@ def get_module_without_script(self) -> DatasetModule:
             )
         ]
         default_config_name = None
+    _api = HubApi()
+    endpoint = _api.get_endpoint_for_read(
+        repo_id=repo_id, repo_type=REPO_TYPE_DATASET)
+
     builder_kwargs = {
         # "base_path": hf_hub_url(self.name, "", revision=revision).rstrip("/"),
         'base_path':
-        HubApi().get_file_base_path(repo_id=repo_id),
+        HubApi().get_file_base_path(repo_id=repo_id, endpoint=endpoint),
         'repo_id':
         self.name,
         'dataset_name':
@@ -894,7 +940,7 @@ class DatasetsWrapperHF:
         streaming: bool = False,
         num_proc: Optional[int] = None,
         storage_options: Optional[Dict] = None,
-        trust_remote_code: bool = True,
+        trust_remote_code: bool = False,
         dataset_info_only: Optional[bool] = False,
         **config_kwargs,
     ) -> Union[DatasetDict, Dataset, IterableDatasetDict, IterableDataset,
@@ -1021,9 +1067,12 @@ class DatasetsWrapperHF:
 
         try:
             _api = HubApi()
+
             if is_relative_path(path) and path.count('/') == 1:
                 _namespace, _dataset_name = path.split('/')
-                _api.dataset_download_statistics(dataset_name=_dataset_name, namespace=_namespace)
+                endpoint = _api.get_endpoint_for_read(
+                    repo_id=path, repo_type=REPO_TYPE_DATASET)
+                _api.dataset_download_statistics(dataset_name=_dataset_name, namespace=_namespace, endpoint=endpoint)
         except Exception as e:
             logger.warning(f'Could not record download statistics: {e}')
 
@@ -1402,6 +1451,7 @@ def load_dataset_with_ctx(*args, **kwargs):
     resolve_pattern_origin = data_files.resolve_pattern
     get_module_without_script_origin = HubDatasetModuleFactoryWithoutScript.get_module
     get_module_with_script_origin = HubDatasetModuleFactoryWithScript.get_module
+    generate_from_dict_origin = features.generate_from_dict
 
     # Monkey patching with modelscope functions
     config.HF_ENDPOINT = get_endpoint()
@@ -1417,6 +1467,7 @@ def load_dataset_with_ctx(*args, **kwargs):
     data_files.resolve_pattern = _resolve_pattern
     HubDatasetModuleFactoryWithoutScript.get_module = get_module_without_script
     HubDatasetModuleFactoryWithScript.get_module = get_module_with_script
+    features.generate_from_dict = generate_from_dict_ms
 
     streaming = kwargs.get('streaming', False)
 
@@ -1427,6 +1478,7 @@ def load_dataset_with_ctx(*args, **kwargs):
         # Restore the original functions
         config.HF_ENDPOINT = hf_endpoint_origin
         file_utils.get_from_cache = get_from_cache_origin
+        features.generate_from_dict = generate_from_dict_origin
         # Keep the context during the streaming iteration
         if not streaming:
             config.HF_ENDPOINT = hf_endpoint_origin

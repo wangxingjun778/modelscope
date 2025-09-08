@@ -1,5 +1,5 @@
 # isolate cases in env, we can install different dependencies in each env.
-isolated:  # test cases that may require excessive anmount of GPU memory or run long time, which will be executed in dedicagted process.
+isolated:  # test cases that may require excessive amount of GPU memory or run long time, which will be executed in dedicated process.
   - test_text_to_speech.py
   - test_multi_modal_embedding.py
   - test_ofa_tasks.py
@@ -73,7 +73,7 @@ envs:
       - numpy>=1.20,<=1.22.0
       - protobuf<4,>=3.20.2
 
-  tensorflow1x: #  cases excuted  tensorflow1.x framework.
+  tensorflow1x: #  cases executed  tensorflow1.x framework.
     requirements: # requirements files run before test case run.
       - tensorflow1x.txt
     dependencies: # requirement packages，pip install before test case run.

@@ -71,6 +71,10 @@ def check_local_model_is_latest(
             headers=snapshot_header,
             use_cookies=cookies,
         )
+        model_cache = None
+        # download via non-git method
+        if not os.path.exists(os.path.join(model_root_path, '.git')):
+            model_cache = ModelFileSystemCache(model_root_path)
         for model_file in model_files:
             if model_file['Type'] == 'tree':
                 continue
@@ -100,15 +104,12 @@ def check_local_model_is_latest(
         pass  # ignore
 
 
-def check_model_is_id(model_id: str, token=None):
-    if token is None:
-        token = os.environ.get('MODELSCOPE_API_TOKEN')
+def check_model_is_id(model_id: str, token: Optional[str] = None):
     if model_id is None or os.path.exists(model_id):
         return False
     else:
         _api = HubApi()
-        if token is not None:
-            _api.login(token)
+        _api.login(token)
         try:
             _api.get_model(model_id=model_id, )
             return True

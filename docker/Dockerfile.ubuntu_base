@@ -27,7 +27,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --reinstall ca-ce
     rm -rf /var/lib/apt/lists/*
 
 ENV LANG=zh_CN.UTF-8 LANGUAGE=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
-RUN wget -O /tmp/boost.tar.gz https://boostorg.jfrog.io/artifactory/main/release/1.80.0/source/boost_1_80_0.tar.gz && \
+RUN wget -O /tmp/boost.tar.gz https://archives.boost.io/release/1.80.0/source/boost_1_80_0.tar.gz && \
     cd /tmp && tar xzf boost.tar.gz  && \
     mv /tmp/boost_1_80_0/boost /usr/include/boost && \
     rm -rf /tmp/boost_1_80_0 && rm -rf boost.tar.gz
@@ -43,7 +43,7 @@ RUN set -eux; \
         wget -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz"; \
         wget -O python.tar.xz.asc "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc"; \
         GNUPGHOME="$(mktemp -d)"; export GNUPGHOME; \
-        gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$GPG_KEY"; \
+        gpg --batch --keyserver hkp://keyserver.ubuntu.com --recv-keys "$GPG_KEY"; \
         gpg --batch --verify python.tar.xz.asc python.tar.xz; \
         gpgconf --kill all; \
         rm -rf "$GNUPGHOME" python.tar.xz.asc; \
@@ -186,7 +186,15 @@ RUN if [ "$USE_GPU" = "True" ] ; then \
 RUN if [ "$USE_GPU" = "True" ] ; then \
        export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.9;9.0;8.6+PTX" && pip install --no-cache-dir git+https://github.com/gxd1994/Pointnet2.PyTorch.git@master#subdirectory=pointnet2; \
     else \
-     echo 'cpu unsupport Pointnet2'; \
+     echo 'CPU env does not support Pointnet2'; \
+    fi
+
+# NVIDIA apex building
+RUN if [ "$USE_GPU" = "True" ] ; then \
+        pip install --no-cache-dir packaging &&\
+        bash /tmp/install_apex.sh; \
+    else \
+     echo 'CPU env does not support NVIDIA Apex.'; \
     fi
 
 
@@ -203,13 +211,6 @@ ARG TENSORFLOW_VERSION={tf_version}
             cd /tmp && git clone -b ms_build --single-branch https://github.com/tastelikefeet/mmcv.git && cd mmcv && MMCV_WITH_OPS=1 MAX_JOBS=32 pip install . && cd / && rm -fr /tmp/mmcv && pip cache purge; \
     fi
 
- # This limits the cuda121 version
- RUN if [ "$USE_GPU" = "True" ] ; then \
-            pip install --no-cache-dir --force tinycudann==1.7  -f https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html; \
-        else \
-            echo 'cpu not install tinycudann'; \
-    fi
-
- RUN pip install --no-cache-dir fairseq
+ RUN pip install --no-cache-dir https://github.com/liyaodev/fairseq/releases/download/v0.12.3.1/fairseq-0.12.3.1-cp311-cp311-linux_x86_64.whl  # for py311
 
 ENTRYPOINT []

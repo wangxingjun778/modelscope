@@ -28,7 +28,8 @@ from modelscope.preprocessors import build_preprocessor
 from modelscope.utils.config import Config, ConfigDict
 from modelscope.utils.config_ds import MS_DATASETS_CACHE
 from modelscope.utils.constant import (DEFAULT_DATASET_NAMESPACE,
-                                       DEFAULT_DATASET_REVISION, ConfigFields,
+                                       DEFAULT_DATASET_REVISION,
+                                       REPO_TYPE_DATASET, ConfigFields,
                                        DatasetFormations, DownloadMode, Hubs,
                                        ModeKeys, Tasks, UploadMode)
 from modelscope.utils.import_utils import is_tf_available, is_torch_available
@@ -170,7 +171,7 @@ class MsDataset:
         custom_cfg: Optional[Config] = Config(),
         token: Optional[str] = None,
         dataset_info_only: Optional[bool] = False,
-        trust_remote_code: Optional[bool] = True,
+        trust_remote_code: Optional[bool] = False,
         **config_kwargs,
     ) -> Union[dict, 'MsDataset', NativeIterableDataset]:
         """Load a MsDataset from the ModelScope Hub, Hugging Face Hub, urls, or a local dataset.
@@ -201,7 +202,7 @@ class MsDataset:
                                            see https://modelscope.cn/docs/Configuration%E8%AF%A6%E8%A7%A3
                 token (str, Optional): SDK token of ModelScope.
                 dataset_info_only (bool, Optional): If set to True, only return the dataset config and info (dict).
-                trust_remote_code (bool, Optional): If set to True, trust the remote code.
+                trust_remote_code (bool, Optional): If set to True, trust the remote code. Default to `False`.
                 **config_kwargs (additional keyword arguments): Keyword arguments to be passed
 
             Returns:
@@ -216,7 +217,7 @@ class MsDataset:
         download_mode = DownloadMode(download_mode
                                      or DownloadMode.REUSE_DATASET_IF_EXISTS)
         hub = Hubs(hub or Hubs.modelscope)
-
+        is_huggingface_hub = (hub == Hubs.huggingface)
         if not isinstance(dataset_name, str) and not isinstance(
                 dataset_name, list):
             raise TypeError(
@@ -232,7 +233,7 @@ class MsDataset:
         dataset_name = os.path.expanduser(dataset_name)
         is_local_path = os.path.exists(dataset_name)
         if is_relative_path(dataset_name) and dataset_name.count(
-                '/') == 1 and not is_local_path:
+                '/') == 1 and not is_local_path and not is_huggingface_hub:
             dataset_name_split = dataset_name.split('/')
             namespace = dataset_name_split[0].strip()
             dataset_name = dataset_name_split[1].strip()
@@ -290,12 +291,16 @@ class MsDataset:
 
         # Load from the modelscope hub
         elif hub == Hubs.modelscope:
-
             # Get dataset type from ModelScope Hub;  dataset_type->4: General Dataset
             from modelscope.hub.api import HubApi
             _api = HubApi()
+            endpoint = _api.get_endpoint_for_read(
+                repo_id=namespace + '/' + dataset_name,
+                repo_type=REPO_TYPE_DATASET)
             dataset_id_on_hub, dataset_type = _api.get_dataset_id_and_type(
-                dataset_name=dataset_name, namespace=namespace)
+                dataset_name=dataset_name,
+                namespace=namespace,
+                endpoint=endpoint)
 
             # Load from the ModelScope Hub for type=4 (general)
             if str(dataset_type) == str(DatasetFormations.general.value):
@@ -386,7 +391,7 @@ class MsDataset:
             version: Optional[str]: Version of the dataset
             num_processes: Optional[int]: The number of processes used for multiprocess uploading.
                 This is only applicable when local_file_path is a directory, and we are uploading mutliple-files
-                insided the directory. When None provided, the number returned by os.cpu_count() is used as default.
+                inside the directory. When None provided, the number returned by os.cpu_count() is used as default.
             chunksize: Optional[int]: The chunksize of objects to upload.
                 For very long iterables using a large value for chunksize can make the job complete much faster than
                 using the default value of 1. Available if local_file_path is a directory.
@@ -612,7 +617,7 @@ class MsDataset:
                 the `preprocessors` is None, the `collate_fn` shouldn't be None.
             drop_remainder(bool, default None): Drop the last incomplete batch when loading.
             collate_fn_args (Dict, optional): A `dict` of arguments to be passed to the`collate_fn`.
-            label_cols (str or List[str], defalut None): Dataset column(s) to load as labels.
+            label_cols (str or List[str], default None): Dataset column(s) to load as labels.
             prefetch (bool, default True): Prefetch data.
 
         Returns:

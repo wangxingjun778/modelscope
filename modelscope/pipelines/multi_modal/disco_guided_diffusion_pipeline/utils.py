@@ -84,8 +84,8 @@ def resize(input,
     eps = fw.finfo(fw.float32).eps
     device = input.device if fw is torch else None
 
-    # set missing scale factors or output shapem one according to another,
-    # scream if both missing. this is also where all the defults policies
+    # set missing scale factors or output shape one according to another,
+    # scream if both missing. this is also where all the defaults policies
     # take place. also handling the by_convs attribute carefully.
     scale_factors, out_shape, by_convs = set_scale_and_out_sz(
         in_shape, out_shape, scale_factors, by_convs, scale_tolerance,
@@ -129,7 +129,7 @@ def resize(input,
         # STEP 2.5- CALCULATE PAD AND UPDATE: according to the field of view,
         # the input should be padded to handle the boundaries, coordinates
         # should be updated. actual padding only occurs when weights are
-        # aplied (step 4). if using by_convs for this dim, then we need to
+        # applied (step 4). if using by_convs for this dim, then we need to
         # calc right and left boundaries for each filter instead.
         pad_sz, projected_grid, field_of_view = calc_pad_sz(
             in_sz, out_sz, field_of_view, projected_grid, scale_factor,
@@ -155,15 +155,15 @@ def resize(input,
 
 
 def get_projected_grid(in_sz, out_sz, scale_factor, fw, by_convs, device=None):
-    # we start by having the ouput coordinates which are just integer locations
-    # in the special case when usin by_convs, we only need two cycles of grid
+    # we start by having the output coordinates which are just integer locations
+    # in the special case when using by_convs, we only need two cycles of grid
     # points. the first and last.
     grid_sz = out_sz if not by_convs else scale_factor.numerator
     out_coordinates = fw_arange(grid_sz, fw, device)
 
-    # This is projecting the ouput pixel locations in 1d to the input tensor,
+    # This is projecting the output pixel locations in 1d to the input tensor,
     # as non-integer locations.
-    # the following fomrula is derived in the paper
+    # the following formula is derived in the paper
     # "From Discrete to Continuous Convolutions" by Shocher et al.
     v1 = out_coordinates / float(scale_factor) + (in_sz - 1) / 2
     v2 = (out_sz - 1) / (2 * float(scale_factor))
@@ -304,7 +304,7 @@ def apply_convs(input, scale_factor, in_sz, out_sz, weights, dim, pad_sz,
         tmp_input = fw_pad(input, fw, pad_sz, pad_mode, dim=pad_dim)
 
         # apply convolution over last dim. store in the output tensor with
-        # positional strides so that when the loop is comlete conv results are
+        # positional strides so that when the loop is complete conv results are
         # interwind
         tmp_output[..., conv_ind::num_convs] = fw_conv(tmp_input, filt, stride)
 

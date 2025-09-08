@@ -8,11 +8,14 @@ import os
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import (BinaryIO, Callable, Generator, Iterable, Iterator, List,
-                    Literal, Optional, TypeVar, Union)
+from typing import (Any, BinaryIO, Callable, Generator, Iterable, Iterator,
+                    List, Literal, Optional, TypeVar, Union)
 
+from modelscope.hub.constants import DEFAULT_MODELSCOPE_DATA_ENDPOINT
+from modelscope.hub.utils.utils import convert_timestamp
 from modelscope.utils.file_utils import get_file_hash
 
 T = TypeVar('T')
@@ -22,10 +25,10 @@ DEFAULT_IGNORE_PATTERNS = [
     '.git/*',
     '*/.git',
     '**/.git/**',
-    '.cache/modelscope',
-    '.cache/modelscope/*',
-    '*/.cache/modelscope',
-    '**/.cache/modelscope/**',
+    '.cache',
+    '.cache/*',
+    '*/.cache',
+    '**/.cache/**',
 ]
 # Forbidden to commit these folders
 FORBIDDEN_FOLDERS = ['.git', '.cache']
@@ -48,6 +51,7 @@ DATASET_LFS_SUFFIX = [
     '.jack',
     '.jpeg',
     '.jpg',
+    '.png',
     '.jsonl',
     '.joblib',
     '.lz4',
@@ -219,7 +223,7 @@ class RepoUtils:
 
 
 @dataclass
-class CommitInfo(str):
+class CommitInfo:
     """Data structure containing information about a newly created commit.
 
     Returned by any method that creates a commit on the Hub: [`create_commit`], [`upload_file`], [`upload_folder`],
@@ -239,46 +243,12 @@ class CommitInfo(str):
         oid (`str`):
             Commit hash id. Example: `"91c54ad1727ee830252e457677f467be0bfd8a57"`.
 
-        pr_url (`str`, *optional*):
-            Url to the PR that has been created, if any. Populated when `create_pr=True`
-            is passed.
-
-        pr_revision (`str`, *optional*):
-            Revision of the PR that has been created, if any. Populated when
-            `create_pr=True` is passed. Example: `"refs/pr/1"`.
-
-        pr_num (`int`, *optional*):
-            Number of the PR discussion that has been created, if any. Populated when
-            `create_pr=True` is passed. Can be passed as `discussion_num` in
-            [`get_discussion_details`]. Example: `1`.
-
-        _url (`str`, *optional*):
-            Legacy url for `str` compatibility. Can be the url to the uploaded file on the Hub (if returned by
-            [`upload_file`]), to the uploaded folder on the Hub (if returned by [`upload_folder`]) or to the commit on
-            the Hub (if returned by [`create_commit`]). Defaults to `commit_url`. It is deprecated to use this
-            attribute. Please use `commit_url` instead.
     """
 
     commit_url: str
     commit_message: str
     commit_description: str
     oid: str
-    pr_url: Optional[str] = None
-
-    # Computed from `pr_url` in `__post_init__`
-    pr_revision: Optional[str] = field(init=False)
-    pr_num: Optional[str] = field(init=False)
-
-    # legacy url for `str` compatibility (ex: url to uploaded file, url to uploaded folder, url to PR, etc.)
-    _url: str = field(
-        repr=False, default=None)  # type: ignore  # defaults to `commit_url`
-
-    def __new__(cls,
-                *args,
-                commit_url: str,
-                _url: Optional[str] = None,
-                **kwargs):
-        return str.__new__(cls, _url or commit_url)
 
     def to_dict(cls):
         return {
@@ -286,8 +256,91 @@ class CommitInfo(str):
             'commit_message': cls.commit_message,
             'commit_description': cls.commit_description,
             'oid': cls.oid,
-            'pr_url': cls.pr_url,
         }
+
+
+@dataclass
+class DetailedCommitInfo:
+    """Detailed commit information from repository history API."""
+    id: Optional[str]
+    short_id: Optional[str]
+    title: Optional[str]
+    message: Optional[str]
+    author_name: Optional[str]
+    authored_date: Optional[datetime]
+    author_email: Optional[str]
+    committed_date: Optional[datetime]
+    committer_name: Optional[str]
+    committer_email: Optional[str]
+    created_at: Optional[datetime]
+
+    @classmethod
+    def from_api_response(cls, data: dict) -> 'DetailedCommitInfo':
+        """Create DetailedCommitInfo from API response data."""
+        return cls(
+            id=data.get('Id', ''),
+            short_id=data.get('ShortId', ''),
+            title=data.get('Title', ''),
+            message=data.get('Message', ''),
+            author_name=data.get('AuthorName', ''),
+            authored_date=convert_timestamp(data.get('AuthoredDate', None)),
+            author_email=data.get('AuthorEmail', ''),
+            committed_date=convert_timestamp(data.get('CommittedDate', None)),
+            committer_name=data.get('CommitterName', ''),
+            committer_email=data.get('CommitterEmail', ''),
+            created_at=convert_timestamp(data.get('CreatedAt', None)),
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            'id': self.id,
+            'short_id': self.short_id,
+            'title': self.title,
+            'message': self.message,
+            'author_name': self.author_name,
+            'authored_date': self.authored_date,
+            'author_email': self.author_email,
+            'committed_date': self.committed_date,
+            'committer_name': self.committer_name,
+            'committer_email': self.committer_email,
+            'created_at': self.created_at,
+        }
+
+
+@dataclass
+class CommitHistoryResponse:
+    """Response from commit history API."""
+    commits: Optional[List[DetailedCommitInfo]]
+    total_count: Optional[int]
+
+    @classmethod
+    def from_api_response(cls, data: dict) -> 'CommitHistoryResponse':
+        """Create CommitHistoryResponse from API response data."""
+        commits_data = data.get('Data', {}).get('Commit', [])
+        commits = [
+            DetailedCommitInfo.from_api_response(commit)
+            for commit in commits_data
+        ]
+
+        return cls(
+            commits=commits,
+            total_count=data.get('TotalCount', 0),
+        )
+
+
+@dataclass
+class RepoUrl:
+
+    url: Optional[str] = None
+    namespace: Optional[str] = None
+    repo_name: Optional[str] = None
+    repo_id: Optional[str] = None
+    repo_type: Optional[str] = None
+    endpoint: Optional[str] = DEFAULT_MODELSCOPE_DATA_ENDPOINT
+
+    def __repr__(self) -> str:
+        return f"RepoUrl('{self}', endpoint='{self.endpoint}', repo_type='{self.repo_type}', repo_id='{self.repo_id}')"
 
 
 def git_hash(data: bytes) -> str:
@@ -338,27 +391,29 @@ class UploadInfo:
     sample: bytes
 
     @classmethod
-    def from_path(cls, path: str):
-
-        file_hash_info: dict = get_file_hash(path)
+    def from_path(cls, path: str, file_hash_info: dict = None):
+        file_hash_info = file_hash_info or get_file_hash(path)
         size = file_hash_info['file_size']
         sha = file_hash_info['file_hash']
-        sample = open(path, 'rb').read(512)
+        with open(path, 'rb') as f:
+            sample = f.read(512)
 
         return cls(sha256=sha, size=size, sample=sample)
 
     @classmethod
-    def from_bytes(cls, data: bytes):
-        sha = get_file_hash(data)['file_hash']
+    def from_bytes(cls, data: bytes, file_hash_info: dict = None):
+        file_hash_info = file_hash_info or get_file_hash(data)
+        sha = file_hash_info['file_hash']
         return cls(size=len(data), sample=data[:512], sha256=sha)
 
     @classmethod
-    def from_fileobj(cls, fileobj: BinaryIO):
-        fileobj_info: dict = get_file_hash(fileobj)
+    def from_fileobj(cls, fileobj: BinaryIO, file_hash_info: dict = None):
+        file_hash_info: dict = file_hash_info or get_file_hash(fileobj)
+        fileobj.seek(0, os.SEEK_SET)
         sample = fileobj.read(512)
         return cls(
-            sha256=fileobj_info['file_hash'],
-            size=fileobj_info['file_size'],
+            sha256=file_hash_info['file_hash'],
+            size=file_hash_info['file_size'],
             sample=sample)
 
 
@@ -369,6 +424,7 @@ class CommitOperationAdd:
     path_in_repo: str
     path_or_fileobj: Union[str, Path, bytes, BinaryIO]
     upload_info: UploadInfo = field(init=False, repr=False)
+    file_hash_info: dict = field(default_factory=dict)
 
     # Internal attributes
 
@@ -393,6 +449,8 @@ class CommitOperationAdd:
 
     def __post_init__(self) -> None:
         """Validates `path_or_fileobj` and compute `upload_info`."""
+
+        self.path_in_repo = _validate_path_in_repo(self.path_in_repo)
 
         # Validate `path_or_fileobj` value
         if isinstance(self.path_or_fileobj, Path):
@@ -420,11 +478,14 @@ class CommitOperationAdd:
 
         # Compute "upload_info" attribute
         if isinstance(self.path_or_fileobj, str):
-            self.upload_info = UploadInfo.from_path(self.path_or_fileobj)
+            self.upload_info = UploadInfo.from_path(self.path_or_fileobj,
+                                                    self.file_hash_info)
         elif isinstance(self.path_or_fileobj, bytes):
-            self.upload_info = UploadInfo.from_bytes(self.path_or_fileobj)
+            self.upload_info = UploadInfo.from_bytes(self.path_or_fileobj,
+                                                     self.file_hash_info)
         else:
-            self.upload_info = UploadInfo.from_fileobj(self.path_or_fileobj)
+            self.upload_info = UploadInfo.from_fileobj(self.path_or_fileobj,
+                                                       self.file_hash_info)
 
     @contextmanager
     def as_file(self) -> Iterator[BinaryIO]:
@@ -474,6 +535,24 @@ class CommitOperationAdd:
             # => no need to read by chunk since the file is guaranteed to be <=5MB.
             with self.as_file() as file:
                 return git_hash(file.read())
+
+
+def _validate_path_in_repo(path_in_repo: str) -> str:
+    # Validate `path_in_repo` value to prevent a server-side issue
+    if path_in_repo.startswith('/'):
+        path_in_repo = path_in_repo[1:]
+    if path_in_repo == '.' or path_in_repo == '..' or path_in_repo.startswith(
+            '../'):
+        raise ValueError(
+            f"Invalid `path_in_repo` in CommitOperation: '{path_in_repo}'")
+    if path_in_repo.startswith('./'):
+        path_in_repo = path_in_repo[2:]
+    for forbidden in FORBIDDEN_FOLDERS:
+        if any(part == forbidden for part in path_in_repo.split('/')):
+            raise ValueError(
+                f"Invalid `path_in_repo` in CommitOperation: cannot update files under a '{forbidden}/' folder (path:"
+                f" '{path_in_repo}').")
+    return path_in_repo
 
 
 CommitOperation = Union[CommitOperationAdd, ]

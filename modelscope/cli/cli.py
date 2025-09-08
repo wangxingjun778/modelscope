@@ -4,27 +4,31 @@ import argparse
 import logging
 
 from modelscope.cli.clearcache import ClearCacheCMD
+from modelscope.cli.create import CreateCMD
 from modelscope.cli.download import DownloadCMD
 from modelscope.cli.llamafile import LlamafileCMD
 from modelscope.cli.login import LoginCMD
 from modelscope.cli.modelcard import ModelCardCMD
 from modelscope.cli.pipeline import PipelineCMD
 from modelscope.cli.plugins import PluginsCMD
+from modelscope.cli.scancache import ScanCacheCMD
 from modelscope.cli.server import ServerCMD
 from modelscope.cli.upload import UploadCMD
-from modelscope.hub.api import HubApi
+from modelscope.hub.constants import MODELSCOPE_ASCII
 from modelscope.utils.logger import get_logger
 
 logger = get_logger(log_level=logging.WARNING)
 
 
 def run_cmd():
+    print(MODELSCOPE_ASCII)
     parser = argparse.ArgumentParser(
         'ModelScope Command Line tool', usage='modelscope <command> [<args>]')
     parser.add_argument(
         '--token', default=None, help='Specify ModelScope SDK token.')
     subparsers = parser.add_subparsers(help='modelscope commands helpers')
 
+    CreateCMD.define_args(subparsers)
     DownloadCMD.define_args(subparsers)
     UploadCMD.define_args(subparsers)
     ClearCacheCMD.define_args(subparsers)
@@ -34,15 +38,13 @@ def run_cmd():
     ServerCMD.define_args(subparsers)
     LoginCMD.define_args(subparsers)
     LlamafileCMD.define_args(subparsers)
+    ScanCacheCMD.define_args(subparsers)
 
     args = parser.parse_args()
 
     if not hasattr(args, 'func'):
         parser.print_help()
         exit(1)
-    if args.token is not None:
-        api = HubApi()
-        api.login(args.token)
     cmd = args.func(args)
     cmd.execute()
 

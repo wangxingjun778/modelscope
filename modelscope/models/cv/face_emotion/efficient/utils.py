@@ -300,7 +300,7 @@ class MaxPool2dDynamicSamePadding(nn.MaxPool2d):
 
 class MaxPool2dStaticSamePadding(nn.MaxPool2d):
     """2D MaxPooling like TensorFlow's 'SAME' mode, with the given input image size.
-       The padding mudule is calculated in construction function, then used in forward.
+       The padding module is calculated in construction function, then used in forward.
     """
 
     def __init__(self, kernel_size, stride, image_size=None, **kwargs):
@@ -535,7 +535,7 @@ def load_pretrained_weights(model,
                         trained with advprop (valid when weights_path is None).
     """
     if isinstance(weights_path, str):
-        state_dict = torch.load(weights_path)
+        state_dict = torch.load(weights_path, weights_only=True)
     else:
         url_map_ = url_map_advprop if advprop else url_map
         state_dict = model_zoo.load_url(url_map_[model_name])

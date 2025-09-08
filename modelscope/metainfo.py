@@ -225,7 +225,8 @@ class Models(object):
     audio_quantization = 'audio-quantization'
     laura_codec = 'laura-codec'
     funasr = 'funasr'
-
+    hifissr = 'hifissr'
+    unetvc_16k = 'unetvc_16k'
     # multi-modal models
     ofa = 'ofa'
     clip = 'clip-multi-modal-embedding'
@@ -297,12 +298,12 @@ class Heads(object):
 class Pipelines(object):
     """ Names for different pipelines.
 
-        Holds the standard pipline name to use for identifying different pipeline.
+        Holds the standard pipeline name to use for identifying different pipeline.
     This should be used to register pipelines.
 
         For pipeline which support different models and implements the common function, we
     should use task name for this pipeline.
-        For pipeline which suuport only one model, we should use ${Model}-${Task} as its name.
+        For pipeline which support only one model, we should use ${Model}-${Task} as its name.
     """
     pipeline_template = 'pipeline-template'
     # vision tasks
@@ -581,6 +582,8 @@ class Pipelines(object):
     audio_quantization = 'audio-quantization'
     audio_quantization_inference = 'audio-quantization-inference'
     laura_codec_tts_inference = 'laura-codec-tts-inference'
+    speech_super_resolution_inference = 'speech-super-resolution-inference'
+    voice_conversion = 'voice-conversion'
 
     # multi-modal tasks
     image_captioning = 'image-captioning'
@@ -1105,7 +1108,7 @@ class Preprocessors(object):
 
         For a general preprocessor, just use the function name as preprocessor name such as
     resize-image, random-crop
-        For a model-specific preprocessor, use ${modelname}-${fuction}
+        For a model-specific preprocessor, use ${modelname}-${function}
     """
 
     # cv preprocessor

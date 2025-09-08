@@ -1,4 +1,5 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
+import importlib
 from typing import TYPE_CHECKING
 
 from modelscope.utils.import_utils import (LazyImportModule,
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from .trainers import (EpochBasedTrainer, Hook, Priority, TrainingArgs,
                            build_dataset_from_file)
     from .utils.constant import Tasks
+    from .utils.hf_util import patch_hub, patch_context, unpatch_hub
     if is_transformers_available():
         from .utils.hf_util import (
             AutoModel, AutoProcessor, AutoFeatureExtractor, GenerationConfig,
@@ -54,7 +56,8 @@ if TYPE_CHECKING:
             AutoModelForMaskedLM, AutoTokenizer, AutoModelForMaskGeneration,
             AutoModelForPreTraining, AutoModelForTextEncoding,
             AutoImageProcessor, BatchFeature, Qwen2VLForConditionalGeneration,
-            T5EncoderModel)
+            T5EncoderModel, Qwen2_5_VLForConditionalGeneration, LlamaModel,
+            LlamaPreTrainedModel, LlamaForCausalLM, hf_pipeline)
     else:
         print(
             'transformer is not installed, please install it if you want to use related modules'
@@ -106,33 +109,32 @@ else:
         'msdatasets': ['MsDataset']
     }
 
-    if is_transformers_available():
-        _import_structure['utils.hf_util'] = [
-            'AutoModel', 'AutoProcessor', 'AutoFeatureExtractor',
-            'GenerationConfig', 'AutoConfig', 'GPTQConfig', 'AwqConfig',
-            'BitsAndBytesConfig', 'AutoModelForCausalLM',
-            'AutoModelForSeq2SeqLM', 'AutoModelForVision2Seq',
-            'AutoModelForSequenceClassification',
-            'AutoModelForTokenClassification',
-            'AutoModelForImageClassification', 'AutoModelForImageToImage',
-            'AutoModelForImageTextToText',
-            'AutoModelForZeroShotImageClassification',
-            'AutoModelForKeypointDetection',
-            'AutoModelForDocumentQuestionAnswering',
-            'AutoModelForSemanticSegmentation',
-            'AutoModelForUniversalSegmentation',
-            'AutoModelForInstanceSegmentation', 'AutoModelForObjectDetection',
-            'AutoModelForZeroShotObjectDetection',
-            'AutoModelForAudioClassification', 'AutoModelForSpeechSeq2Seq',
-            'AutoModelForMaskedImageModeling',
-            'AutoModelForVisualQuestionAnswering',
-            'AutoModelForTableQuestionAnswering',
-            'AutoModelForImageSegmentation', 'AutoModelForQuestionAnswering',
-            'AutoModelForMaskedLM', 'AutoTokenizer',
-            'AutoModelForMaskGeneration', 'AutoModelForPreTraining',
-            'AutoModelForTextEncoding', 'AutoImageProcessor', 'BatchFeature',
-            'Qwen2VLForConditionalGeneration', 'T5EncoderModel'
-        ]
+    from modelscope.utils import hf_util
+    from modelscope.utils.hf_util.patcher import _patch_pretrained_class
+
+    extra_objects = {}
+    attributes = dir(hf_util)
+    imports = [attr for attr in attributes if not attr.startswith('__')]
+    for _import in imports:
+        extra_objects[_import] = getattr(hf_util, _import)
+
+    def try_import_from_hf(name):
+        hf_pkgs = ['transformers', 'peft', 'diffusers']
+        module = None
+        for pkg in hf_pkgs:
+            try:
+                module = getattr(importlib.import_module(pkg), name)
+                break
+            except Exception:  # noqa
+                pass
+
+        if module is not None:
+            module = _patch_pretrained_class([module], wrap=True)
+        else:
+            raise ImportError(
+                f'Cannot import available module of {name} in modelscope,'
+                f' or related packages({hf_pkgs})')
+        return module[0]
 
     import sys
 
@@ -141,5 +143,6 @@ else:
         globals()['__file__'],
         _import_structure,
         module_spec=__spec__,
-        extra_objects={},
+        extra_objects=extra_objects,
+        extra_import_func=try_import_from_hf,
     )

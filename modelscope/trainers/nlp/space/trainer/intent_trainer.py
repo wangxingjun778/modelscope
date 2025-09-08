@@ -7,8 +7,9 @@ from collections import OrderedDict
 import json
 import numpy as np
 import torch
+from torch.optim import AdamW
 from tqdm import tqdm
-from transformers.optimization import AdamW, get_linear_schedule_with_warmup
+from transformers.optimization import get_linear_schedule_with_warmup
 
 from modelscope.trainers.nlp.space.metrics.metrics_tracker import \
     MetricsTracker
@@ -220,7 +221,7 @@ class Trainer(object):
                         if name == 'embedder.token_embedding.weight':
                             z[-param.shape[0]:] = arr
                             print(
-                                f'part of parameter({name}) random normlize initialize'
+                                f'part of parameter({name}) random normalize initialize'
                             )
                         else:
                             if z.shape[0] < param.shape[0]:
@@ -229,7 +230,7 @@ class Trainer(object):
                             else:
                                 z[:param.shape[0]] = arr
                                 print(
-                                    f'part of parameter({name}) random normlize initialize'
+                                    f'part of parameter({name}) random normalize initialize'
                                 )
                         dtype, device = param.dtype, param.device
                         z = torch.tensor(z, dtype=dtype, device=device)
@@ -243,7 +244,7 @@ class Trainer(object):
             for name in parameters:
                 if name not in model_state_dict:
                     if parameters[name].requires_grad:
-                        print(f'parameter({name}) random normlize initialize')
+                        print(f'parameter({name}) random normalize initialize')
                         z = np.random.normal(
                             scale=self.func_model.initializer_range,
                             size=parameters[name].shape).astype('float32')

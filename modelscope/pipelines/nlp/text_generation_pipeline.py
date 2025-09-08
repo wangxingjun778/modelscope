@@ -64,7 +64,7 @@ class TextGenerationPipeline(Pipeline, PipelineStreamingOutputMixin):
             >>> # Or use the dict input:
             >>> print(pipeline_ins({'sentence': sentence1}))
 
-            To view other examples plese check tests/pipelines/test_text_generation.py.
+            To view other examples please check tests/pipelines/test_text_generation.py.
         """
         super().__init__(
             model=model,
@@ -253,6 +253,7 @@ class ChatGLM6bV2TextGenerationPipeline(Pipeline):
                  model: Union[Model, str],
                  quantization_bit=None,
                  use_bf16=False,
+                 trust_remote_code: Optional[bool] = None,
                  **kwargs):
         from modelscope import AutoTokenizer
         device: str = kwargs.get('device', 'gpu')
@@ -269,12 +270,9 @@ class ChatGLM6bV2TextGenerationPipeline(Pipeline):
             if use_bf16:
                 default_torch_dtype = torch.bfloat16
             torch_dtype = kwargs.get('torch_dtype', default_torch_dtype)
-            logger.warning(
-                f'Use trust_remote_code=True. Will invoke codes from {model_dir}. Please make sure '
-                'that you can trust the external codes.')
             model = Model.from_pretrained(
                 model_dir,
-                trust_remote_code=True,
+                trust_remote_code=trust_remote_code,
                 device_map=device_map,
                 torch_dtype=torch_dtype)
         else:
@@ -288,11 +286,8 @@ class ChatGLM6bV2TextGenerationPipeline(Pipeline):
 
         self.model = model
         self.model.eval()
-        logger.warning(
-            f'Use trust_remote_code=True. Will invoke codes from {self.model.model_dir}. Please '
-            'make sure that you can trust the external codes.')
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model.model_dir, trust_remote_code=True)
+            self.model.model_dir, trust_remote_code=trust_remote_code)
 
         super().__init__(model=model, **kwargs)
 
@@ -321,6 +316,7 @@ class QWenChatPipeline(Pipeline):
         device_map = kwargs.get('device_map', 'auto')
         use_max_memory = kwargs.get('use_max_memory', False)
         revision = kwargs.get('model_revision', 'v.1.0.5')
+        trust_remote_code = kwargs.pop('trust_remote_code', None)
 
         if use_max_memory:
             max_memory = f'{int(torch.cuda.mem_get_info()[0] / 1024 ** 3) - 2}GB'
@@ -334,19 +330,17 @@ class QWenChatPipeline(Pipeline):
             bf16 = False
 
         if isinstance(model, str):
-            logger.warning(
-                f'Use trust_remote_code=True. Will invoke codes from {model}. Please make sure '
-                'that you can trust the external codes.')
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model, revision=revision, trust_remote_code=True)
+                model, revision=revision, trust_remote_code=trust_remote_code)
             self.model = AutoModelForCausalLM.from_pretrained(
                 model,
                 device_map=device_map,
                 revision=revision,
-                trust_remote_code=True,
+                trust_remote_code=trust_remote_code,
                 fp16=bf16).eval()
             self.model.generation_config = GenerationConfig.from_pretrained(
-                model, trust_remote_code=True)  # 可指定不同的生成长度、top_p等相关超参
+                model,
+                trust_remote_code=trust_remote_code)  # 可指定不同的生成长度、top_p等相关超参
 
         super().__init__(model=self.model, **kwargs)
         # skip pipeline model placement
@@ -388,6 +382,7 @@ class QWenTextGenerationPipeline(Pipeline):
         device_map = kwargs.get('device_map', 'auto')
         use_max_memory = kwargs.get('use_max_memory', False)
         revision = kwargs.get('model_revision', 'v.1.0.4')
+        trust_remote_code = kwargs.pop('trust_remote_code', None)
 
         if use_max_memory:
             max_memory = f'{int(torch.cuda.mem_get_info()[0] / 1024 ** 3) - 2}GB'
@@ -401,17 +396,14 @@ class QWenTextGenerationPipeline(Pipeline):
             bf16 = False
 
         if isinstance(model, str):
-            logger.warning(
-                f'Use trust_remote_code=True. Will invoke codes from {model}. Please make sure '
-                'that you can trust the external codes.')
             self.model = AutoModelForCausalLM.from_pretrained(
                 model,
                 device_map=device_map,
                 revision=revision,
-                trust_remote_code=True,
+                trust_remote_code=trust_remote_code,
                 bf16=bf16).eval()
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model, revision=revision, trust_remote_code=True)
+                model, revision=revision, trust_remote_code=trust_remote_code)
             self.model.generation_config = GenerationConfig.from_pretrained(
                 model)
         else:
@@ -448,7 +440,7 @@ class QWenTextGenerationPipeline(Pipeline):
 class SeqGPTPipeline(Pipeline):
 
     def __init__(self, model: Union[Model, str], **kwargs):
-        from modelscope.utils.hf_util import AutoTokenizer
+        from modelscope import AutoTokenizer
 
         if isinstance(model, str):
             model_dir = snapshot_download(
@@ -525,7 +517,7 @@ class Llama2TaskPipeline(TextGenerationPipeline):
             >>>     temperature=1.0, repetition_penalty=1., eos_token_id=2, bos_token_id=1, pad_token_id=0)
             >>> print(result['text'])
 
-            To view other examples plese check tests/pipelines/test_llama2_text_generation_pipeline.py.
+            To view other examples please check tests/pipelines/test_llama2_text_generation_pipeline.py.
         """
         self.model = Model.from_pretrained(
             model, device_map='auto', torch_dtype=torch.float16)
@@ -612,7 +604,7 @@ class Llama2chatTaskPipeline(Pipeline):
             >>> pad_token_id=0, history=history_demo)
             >>> print(result['response'])
 
-            To view other examples plese check tests/pipelines/test_llama2_text_generation_pipeline.py.
+            To view other examples please check tests/pipelines/test_llama2_text_generation_pipeline.py.
         """
 
     def __init__(self,

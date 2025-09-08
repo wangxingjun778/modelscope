@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from functools import partial
 from multiprocessing import Pool
 from threading import Lock
-from typing import Any, Dict, Generator, List, Mapping, Union
+from typing import Any, Dict, Generator, List, Mapping, Optional, Union
 
 import numpy as np
 from packaging import version
@@ -25,6 +25,7 @@ from modelscope.utils.hub import read_config, snapshot_download
 from modelscope.utils.import_utils import is_tf_available, is_torch_available
 from modelscope.utils.logger import get_logger
 from modelscope.utils.torch_utils import compile_model
+from ..utils.automodel_utils import check_model_from_owner_group
 from .util import is_model, is_official_hub_path
 
 if is_torch_available():
@@ -45,6 +46,8 @@ class Pipeline(ABC):
     """
 
     def initiate_single_model(self, model, **kwargs):
+        if self.trust_remote_code:
+            kwargs['trust_remote_code'] = True
         if isinstance(model, str):
             logger.info(f'initiate model from {model}')
         if isinstance(model, str) and is_official_hub_path(model):
@@ -95,6 +98,7 @@ class Pipeline(ABC):
         self.device_map = device_map
         verify_device(device)
         self.device_name = device
+        self.trust_remote_code = kwargs.get('trust_remote_code', False)
 
         if not isinstance(model, List):
             self.model = self.initiate_single_model(model, **kwargs)
@@ -132,6 +136,22 @@ class Pipeline(ABC):
         self._auto_collate = auto_collate
         self._compile = kwargs.get('compile', False)
         self._compile_options = kwargs.get('compile_options', {})
+
+    def check_trust_remote_code(self,
+                                info_str: Optional[str] = None,
+                                model_dir: Optional[str] = None):
+        """Check trust_remote_code if the pipeline needs to import extra libs
+
+        Args:
+            info_str(str): The info showed to user if trust_remote_code is `False`.
+            model_dir(`Optional[str]`): The local model directory. If is a trusted model, check remote code will pass.
+        """
+        info_str = info_str or (
+            'This pipeline requires `trust_remote_code` to be `True` because it needs to '
+            'import extra libs or execute the code in the model repo, setting this to true '
+            'means you trust the files in it.')
+        if not check_model_from_owner_group(model_dir=model_dir):
+            assert self.trust_remote_code, info_str
 
     def prepare_model(self):
         """ Place model on certain device for pytorch models before first inference

@@ -1,5 +1,6 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 import enum
+import os
 
 
 class Fields(object):
@@ -263,6 +264,8 @@ class AudioTasks(object):
     speaker_diarization_dialogue_detection = 'speaker-diarization-dialogue-detection'
     speaker_diarization_semantic_speaker_turn_detection = 'speaker-diarization-semantic-speaker-turn-detection'
     emotion_recognition = 'emotion-recognition'
+    speech_super_resolution = 'speech-super-resolution'
+    voice_conversion = 'voice-conversion'
 
 
 class MultiModalTasks(object):
@@ -510,6 +513,10 @@ DEFAULT_REPOSITORY_REVISION = 'master'
 DEFAULT_DATASET_REVISION = 'master'
 DEFAULT_DATASET_NAMESPACE = 'modelscope'
 DEFAULT_DATA_ACCELERATION_ENDPOINT = 'https://oss-accelerate.aliyuncs.com'
+INTRA_CLOUD_ACCELERATION = str(
+    os.environ.get('INTRA_CLOUD_ACCELERATION', 'True')).lower()
+INTRA_CLOUD_ACCELERATION_REGION = str(
+    os.environ.get('INTRA_CLOUD_ACCELERATION_REGION', '')).lower()
 
 
 class ModeKeys:
@@ -582,9 +589,6 @@ class DatasetPathName:
 
 class MetaDataFields:
     ARGS_BIG_DATA = 'big_data'
-
-
-DatasetVisibilityMap = {1: 'private', 3: 'internal', 5: 'public'}
 
 
 class DistributedParallelType(object):

@@ -1,7 +1,7 @@
 import inspect
 import os
 from types import MethodType
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from modelscope import get_logger
 from modelscope.metainfo import Tasks
@@ -78,11 +78,10 @@ def get_default_automodel(config) -> Optional[type]:
 
 def get_hf_automodel_class(model_dir: str,
                            task_name: Optional[str]) -> Optional[type]:
-    from modelscope.utils.hf_util import (AutoConfig, AutoModel,
-                                          AutoModelForCausalLM,
-                                          AutoModelForSeq2SeqLM,
-                                          AutoModelForTokenClassification,
-                                          AutoModelForSequenceClassification)
+    from modelscope import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                            AutoModelForSeq2SeqLM,
+                            AutoModelForTokenClassification,
+                            AutoModelForSequenceClassification)
     automodel_mapping = {
         Tasks.backbone: AutoModel,
         Tasks.chat: AutoModelForCausalLM,
@@ -94,10 +93,7 @@ def get_hf_automodel_class(model_dir: str,
     if not os.path.exists(config_path):
         return None
     try:
-        logger.warning(
-            f'Use trust_remote_code=True. Will invoke codes from {model_dir}. Please make sure '
-            'that you can trust the external codes.')
-        config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(model_dir, trust_remote_code=False)
         if task_name is None:
             automodel_class = get_default_automodel(config)
         else:
@@ -128,3 +124,24 @@ def try_to_load_hf_model(model_dir: str, task_name: str,
         # use hf
         model = automodel_class.from_pretrained(model_dir, **kwargs)
     return model
+
+
+def check_model_from_owner_group(model_dir: str,
+                                 owner_group: List[str] = None) -> bool:
+    """This checking is for the torch.load, this function may eval malicious code into memory
+
+    Args:
+        model_dir: The local model_dir
+        owner_group: The owner group to trust
+
+    Returns:
+        bool: Whether the group can be trusted
+    """
+    if not model_dir:
+        return False
+    if owner_group is None:
+        owner_group = ['iic', 'damo']
+    model_dir = model_dir.rstrip('/').rstrip('\\')
+    model_dir = os.path.dirname(model_dir)
+    group = os.path.basename(model_dir)
+    return group in owner_group

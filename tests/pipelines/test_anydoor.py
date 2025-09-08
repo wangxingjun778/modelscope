@@ -13,7 +13,9 @@ class AnydoorTest(unittest.TestCase):
         self.task = Tasks.image_to_image_generation
         self.model_id = 'damo/AnyDoor_models'
 
-    @unittest.skipUnless(test_level() >= 0, 'skip test in current test level')
+    @unittest.skipUnless(
+        test_level() >= 1,
+        'Skip to prevent a downgrade of huggingface_hub and transformers')
     def test_run(self):
         ref_image = 'https://modelscope.oss-cn-beijing.aliyuncs.com/test/images/image_anydoor_fg.jpg'
         ref_mask = 'https://modelscope.oss-cn-beijing.aliyuncs.com/test/images/image_anydoor_fg_mask.png'
@@ -22,7 +24,7 @@ class AnydoorTest(unittest.TestCase):
         save_path = 'data/test/images/image_anydoor_gen.png'
 
         anydoor_pipline: AnydoorPipeline = pipeline(
-            self.task, model=self.model_id)
+            self.task, model=self.model_id, trust_remote_code=True)
         out = anydoor_pipline((ref_image, ref_mask, bg_image, bg_mask))
         image = out['output_img']
         image.save(save_path)

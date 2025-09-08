@@ -36,10 +36,7 @@ from transformers.modeling_outputs import (
     BaseModelOutput, BaseModelOutputWithPastAndCrossAttentions,
     BaseModelOutputWithPooling, BaseModelOutputWithPoolingAndCrossAttentions,
     CausalLMOutputWithCrossAttentions)
-from transformers.modeling_utils import (PreTrainedModel,
-                                         apply_chunking_to_forward,
-                                         find_pruneable_heads_and_indices,
-                                         prune_linear_layer)
+from transformers.modeling_utils import PreTrainedModel
 from transformers.models.auto import AutoModelForCausalLM
 from transformers.utils import ModelOutput
 
@@ -52,6 +49,9 @@ from modelscope.models.multi_modal.mplug_owl.configuration_mplug_owl import (
 from modelscope.outputs import OutputKeys
 from modelscope.utils.config import Config
 from modelscope.utils.constant import ModelFile, Tasks
+from modelscope.utils.torch_utils import (apply_chunking_to_forward,
+                                          find_pruneable_heads_and_indices,
+                                          prune_linear_layer)
 
 __all__ = ['MplugOwlForConditionalGeneration']
 
@@ -482,7 +482,9 @@ class MplugOwlPreTrainedModel(PreTrainedModel):
         r'language_model.lm_head.weight',
     ]
     _no_split_modules = ['MplugOwlAttention']
-    _keep_in_fp32_modules = ['wo']
+
+    # Fix: No wo module found?
+    # _keep_in_fp32_modules = ['wo']
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -1285,7 +1287,7 @@ class MplugOwlVisualAbstractorModel(MplugOwlPreTrainedModel):
 
 class MplugOwlModel(MplugOwlPreTrainedModel):
     r"""The mPLUG-Owl model is a multi-modal conversation model that support various modalities as input.
-    mPLUG-Owl consists a visual encoder, a visual abstrator module and a language decoder model, which enables
+    mPLUG-Owl consists a visual encoder, a visual abstractor module and a language decoder model, which enables
     both image and text input.
     This model is implemented base on mPLUG-Owl: Modularization Empowers Large Language Models with Multimodality.
     `Paper <https://arxiv.org/abs/2304.14178>`.

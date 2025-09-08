@@ -34,10 +34,7 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     BaseModelOutputWithPoolingAndCrossAttentions,
     CausalLMOutputWithCrossAttentions)
-from transformers.modeling_utils import (PreTrainedModel,
-                                         apply_chunking_to_forward,
-                                         find_pruneable_heads_and_indices,
-                                         prune_linear_layer)
+from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 
 from modelscope.models.multi_modal.mplug.configuration_mplug import (
@@ -45,6 +42,9 @@ from modelscope.models.multi_modal.mplug.configuration_mplug import (
 from modelscope.models.multi_modal.mplug.mvit import MViTv2, MViTv2_Base_config
 from modelscope.models.multi_modal.mplug.predictor import TextGenerator
 from modelscope.utils.constant import ModelFile
+from modelscope.utils.torch_utils import (apply_chunking_to_forward,
+                                          find_pruneable_heads_and_indices,
+                                          prune_linear_layer)
 
 transformers.logging.set_verbosity_error()
 
@@ -2403,7 +2403,7 @@ class MPlugForImageTextRetrieval(MPlug):
 
             self._dequeue_and_enqueue(image_feat_m, text_feat_m, idx)
 
-            # forward the positve image-text pair
+            # forward the positive image-text pair
             _, output_pos = self.fusion_encoder(
                 encoder_embeds=text_embeds,
                 attention_mask=text.attention_mask,

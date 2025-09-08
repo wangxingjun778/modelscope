@@ -23,10 +23,7 @@ from transformers.modeling_outputs import (
     MultipleChoiceModelOutput, NextSentencePredictorOutput,
     QuestionAnsweringModelOutput, SequenceClassifierOutput,
     TokenClassifierOutput)
-from transformers.modeling_utils import (PreTrainedModel,
-                                         apply_chunking_to_forward,
-                                         find_pruneable_heads_and_indices,
-                                         prune_linear_layer)
+from transformers.modeling_utils import PreTrainedModel
 from transformers.models.bert.configuration_bert import BertConfig
 from transformers.utils import logging
 
@@ -36,6 +33,9 @@ from modelscope.models.builder import MODELS
 from modelscope.outputs import AttentionBackboneModelOutput
 from modelscope.utils.constant import Tasks
 from modelscope.utils.nlp.utils import parse_labels_in_order
+from modelscope.utils.torch_utils import (apply_chunking_to_forward,
+                                          find_pruneable_heads_and_indices,
+                                          prune_linear_layer)
 
 transformers.logging.set_verbosity_error()
 
@@ -920,7 +920,7 @@ class BertForPreTrainingOutput(ModelOutput):
 class BertModel(BertPreTrainedModel):
     """
     Noted that the bert model here is slightly updated from original bert, so we
-    maintian the code here independently. The Bert Model transformer outputting
+    maintain the code here independently. The Bert Model transformer outputting
     raw hidden-states without any specific head on top.
 
     This model inherits from [`PreTrainedModel`]. Check the superclass

@@ -8,6 +8,7 @@ from modelscope.hub.snapshot_download import snapshot_download
 from modelscope.metainfo import Tasks
 from modelscope.models.builder import build_backbone, build_model
 from modelscope.utils.automodel_utils import (can_load_by_ms,
+                                              check_model_from_owner_group,
                                               try_to_load_hf_model)
 from modelscope.utils.config import Config, ConfigDict
 from modelscope.utils.constant import DEFAULT_MODEL_REVISION, Invoke, ModelFile
@@ -30,9 +31,26 @@ class Model(ABC):
         device_name = kwargs.get('device', 'gpu')
         verify_device(device_name)
         self._device_name = device_name
+        self.trust_remote_code = kwargs.get('trust_remote_code', False)
 
     def __call__(self, *args, **kwargs) -> Dict[str, Any]:
         return self.postprocess(self.forward(*args, **kwargs))
+
+    def check_trust_remote_code(self,
+                                info_str: Optional[str] = None,
+                                model_dir: Optional[str] = None):
+        """Check trust_remote_code if the model needs to import extra libs
+
+        Args:
+            info_str(str): The info showed to user if trust_remote_code is `False`.
+            model_dir(`Optional[str]`): The local model directory. If is a trusted model, check remote code will pass.
+        """
+        info_str = info_str or (
+            'This model requires `trust_remote_code` to be `True` because it needs to '
+            'import extra libs or execute the code in the model repo, setting this to true '
+            'means you trust the files in it.')
+        if not check_model_from_owner_group(model_dir=model_dir):
+            assert self.trust_remote_code, info_str
 
     @abstractmethod
     def forward(self, *args, **kwargs) -> Dict[str, Any]:
@@ -72,6 +90,7 @@ class Model(ABC):
                         revision: Optional[str] = DEFAULT_MODEL_REVISION,
                         cfg_dict: Config = None,
                         device: str = None,
+                        trust_remote_code: Optional[bool] = False,
                         **kwargs):
         """Instantiate a model from local directory or remote model repo. Note
         that when loading from remote, the model revision can be specified.
@@ -83,6 +102,7 @@ class Model(ABC):
             cfg_dict(Config, `optional`): An optional model config. If provided, it will replace
                 the config read out of the `model_name_or_path`
             device(str, `optional`): The device to load the model.
+            trust_remote_code(bool, `optional`): Whether to trust and allow execution of remote code. Default is False.
             **kwargs:
                 task(str, `optional`): The `Tasks` enumeration value to replace the task value
                     read out of config in the `model_name_or_path`. This is useful when the model to be loaded is not
@@ -168,10 +188,24 @@ class Model(ABC):
                 f'`{ModelFile.CONFIGURATION}` file not found.')
         model_cfg.model_dir = local_model_dir
 
-        # install and import remote repos before build
-        register_plugins_repo(cfg.safe_get('plugins'))
-        register_modelhub_repo(local_model_dir, cfg.get('allow_remote', False))
-
+        # Security check: Only allow execution of remote code or plugins if trust_remote_code is True
+        plugins = cfg.safe_get('plugins')
+        if plugins and not trust_remote_code:
+            raise RuntimeError(
+                'Detected plugins field in the model configuration file, but '
+                'trust_remote_code=True was not explicitly set.\n'
+                'To prevent potential execution of malicious code, loading has been refused.\n'
+                'If you trust this model repository, please pass trust_remote_code=True to from_pretrained.'
+            )
+        if plugins and trust_remote_code:
+            logger.warning(
+                'Use trust_remote_code=True. Will invoke codes or install plugins from remote model repo. '
+                'Please make sure that you can trust the external codes.')
+        register_modelhub_repo(local_model_dir, allow_remote=trust_remote_code)
+        default_args = {}
+        if trust_remote_code:
+            default_args = {'trust_remote_code': trust_remote_code}
+        register_plugins_repo(plugins)
         for k, v in kwargs.items():
             model_cfg[k] = v
         if device is not None:
@@ -180,7 +214,8 @@ class Model(ABC):
             model_cfg.init_backbone = True
             model = build_backbone(model_cfg)
         else:
-            model = build_model(model_cfg, task_name=task_name)
+            model = build_model(
+                model_cfg, task_name=task_name, default_args=default_args)
 
         # dynamically add pipeline info to model for pipeline inference
         if hasattr(cfg, 'pipeline'):

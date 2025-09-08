@@ -160,7 +160,9 @@ class CPUImageBuilder(Builder):
             content = content.replace('{extra_content}', extra_content)
             content = content.replace('{meta_file}', meta_file)
             content = content.replace('{version_args}', version_args)
+            content = content.replace('{cur_time}', formatted_time)
             content = content.replace('{install_ms_deps}', 'True')
+            content = content.replace('{install_megatron_deps}', 'False')
             content = content.replace('{torch_version}',
                                       self.args.torch_version)
             content = content.replace('{torchvision_version}',
@@ -202,11 +204,15 @@ class GPUImageBuilder(Builder):
 
     def generate_dockerfile(self) -> str:
         meta_file = './docker/install.sh'
+        # pushd ~ popd is to solve the tf cannot use gpu problem.
         extra_content = """
 RUN pip install tf-keras==2.16.0 --no-dependencies && \
     pip install --no-cache-dir torchsde jupyterlab torchmetrics==0.11.4 basicsr pynvml shortuuid && \
     CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0 7.5 8.0 8.6 8.9 9.0" \
         pip install --no-cache-dir  'git+https://github.com/facebookresearch/detectron2.git'
+RUN pushd $(dirname $(python -c 'print(__import__("tensorflow").__file__)'))  && \
+    ln -svf ../nvidia/*/lib/*.so* .  && \
+    popd
 """
 
         version_args = (
@@ -222,7 +228,9 @@ RUN pip install tf-keras==2.16.0 --no-dependencies && \
             content = content.replace('{extra_content}', extra_content)
             content = content.replace('{meta_file}', meta_file)
             content = content.replace('{version_args}', version_args)
+            content = content.replace('{cur_time}', formatted_time)
             content = content.replace('{install_ms_deps}', 'True')
+            content = content.replace('{install_megatron_deps}', 'False')
             content = content.replace('{torch_version}',
                                       self.args.torch_version)
             content = content.replace('{torchvision_version}',
@@ -265,15 +273,15 @@ class LLMImageBuilder(Builder):
             # A mirrored image of nvidia/cuda:12.4.0-devel-ubuntu22.04
             args.base_image = 'nvidia/cuda:12.4.0-devel-ubuntu22.04'
         if not args.torch_version:
-            args.torch_version = '2.4.0'
-            args.torchaudio_version = '2.4.0'
-            args.torchvision_version = '0.19.0'
+            args.torch_version = '2.6.0'
+            args.torchaudio_version = '2.6.0'
+            args.torchvision_version = '0.21.0'
         if not args.cuda_version:
             args.cuda_version = '12.4.0'
         if not args.vllm_version:
-            args.vllm_version = '0.6.3.post1'
+            args.vllm_version = '0.8.5.post1'
         if not args.lmdeploy_version:
-            args.lmdeploy_version = '0.6.2'
+            args.lmdeploy_version = '0.9.1'
         if not args.autogptq_version:
             args.autogptq_version = '0.7.1'
         if not args.flashattn_version:
@@ -296,7 +304,9 @@ class LLMImageBuilder(Builder):
             content = content.replace('{extra_content}', extra_content)
             content = content.replace('{meta_file}', meta_file)
             content = content.replace('{version_args}', version_args)
+            content = content.replace('{cur_time}', formatted_time)
             content = content.replace('{install_ms_deps}', 'False')
+            content = content.replace('{install_megatron_deps}', 'False')
             content = content.replace('{torch_version}',
                                       self.args.torch_version)
             content = content.replace('{torchvision_version}',
@@ -326,6 +336,63 @@ class LLMImageBuilder(Builder):
             f'{docker_registry}:ubuntu{self.args.ubuntu_version}-cuda{self.args.cuda_version}-'
             f'{self.args.python_tag}-torch{self.args.torch_version}-'
             f'{self.args.modelscope_version}-LLM-{formatted_time}-test')
+        ret = os.system(f'docker tag {self.image()} {image_tag2}')
+        if ret != 0:
+            return ret
+        return os.system(f'docker push {image_tag2}')
+
+
+class SwiftImageBuilder(LLMImageBuilder):
+
+    def generate_dockerfile(self) -> str:
+        meta_file = './docker/install.sh'
+        with open('docker/Dockerfile.extra_install', 'r') as f:
+            extra_content = f.read()
+            extra_content = extra_content.replace('{python_version}',
+                                                  self.args.python_version)
+        extra_content += """
+RUN pip install --no-cache-dir deepspeed==0.14.5 --no-deps && \
+    pip install --no-cache-dir -U icecream soundfile pybind11
+"""
+        version_args = (
+            f'{self.args.torch_version} {self.args.torchvision_version} {self.args.torchaudio_version} '
+            f'{self.args.vllm_version} {self.args.lmdeploy_version} {self.args.autogptq_version} '
+            f'{self.args.flashattn_version}')
+        with open('docker/Dockerfile.ubuntu', 'r') as f:
+            content = f.read()
+            content = content.replace('{base_image}', self.args.base_image)
+            content = content.replace('{extra_content}', extra_content)
+            content = content.replace('{meta_file}', meta_file)
+            content = content.replace('{version_args}', version_args)
+            content = content.replace('{cur_time}', formatted_time)
+            content = content.replace('{install_ms_deps}', 'False')
+            content = content.replace('{install_megatron_deps}', 'True')
+            content = content.replace('{torch_version}',
+                                      self.args.torch_version)
+            content = content.replace('{torchvision_version}',
+                                      self.args.torchvision_version)
+            content = content.replace('{torchaudio_version}',
+                                      self.args.torchaudio_version)
+            content = content.replace('{index_url}', '')
+            content = content.replace('{modelscope_branch}',
+                                      self.args.modelscope_branch)
+            content = content.replace('{swift_branch}', self.args.swift_branch)
+        return content
+
+    def image(self) -> str:
+        return (
+            f'{docker_registry}:ubuntu{self.args.ubuntu_version}-cuda{self.args.cuda_version}-'
+            f'{self.args.python_tag}-torch{self.args.torch_version}-{self.args.modelscope_version}-swift-test'
+        )
+
+    def push(self):
+        ret = os.system(f'docker push {self.image()}')
+        if ret != 0:
+            return ret
+        image_tag2 = (
+            f'{docker_registry}:ubuntu{self.args.ubuntu_version}-cuda{self.args.cuda_version}-'
+            f'{self.args.python_tag}-torch{self.args.torch_version}-'
+            f'{self.args.modelscope_version}-swift-{formatted_time}-test')
         ret = os.system(f'docker tag {self.image()} {image_tag2}')
         if ret != 0:
             return ret
@@ -363,6 +430,8 @@ elif args.image_type.lower() == 'gpu':
     builder_cls = GPUImageBuilder
 elif args.image_type.lower() == 'llm':
     builder_cls = LLMImageBuilder
+elif args.image_type.lower() == 'swift':
+    builder_cls = SwiftImageBuilder
 else:
     raise ValueError(f'Unsupported image_type: {args.image_type}')
 

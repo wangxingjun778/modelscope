@@ -3,11 +3,9 @@ import os
 from argparse import ArgumentParser, _SubParsersAction
 
 from modelscope.cli.base import CLICommand
-from modelscope.hub.api import HubApi, ModelScopeConfig
+from modelscope.hub.api import HubApi
+from modelscope.hub.utils.utils import convert_patterns, get_endpoint
 from modelscope.utils.constant import REPO_TYPE_MODEL, REPO_TYPE_SUPPORT
-from modelscope.utils.logger import get_logger
-
-logger = get_logger()
 
 
 def subparser_func(args):
@@ -92,8 +90,8 @@ class UploadCMD(CLICommand):
         parser.add_argument(
             '--endpoint',
             type=str,
-            default='https://www.modelscope.cn',
-            help='Endpoint for Modelscope service.')
+            default=get_endpoint(),
+            help='Endpoint for ModelScope service.')
 
         parser.set_defaults(func=subparser_func)
 
@@ -137,43 +135,32 @@ class UploadCMD(CLICommand):
             self.local_path = self.args.local_path
             self.path_in_repo = self.args.path_in_repo
 
-        # Check token and login
-        # The cookies will be reused if the user has logged in before.
         api = HubApi(endpoint=self.args.endpoint)
 
-        if self.args.token:
-            api.login(access_token=self.args.token)
-        cookies = ModelScopeConfig.get_cookies()
-        if cookies is None:
-            raise ValueError(
-                'The `token` is not provided! '
-                'You can pass the `--token` argument, '
-                'or use api.login(access_token=`your_sdk_token`). '
-                'Your token is available at https://modelscope.cn/my/myaccesstoken'
-            )
-
         if os.path.isfile(self.local_path):
-            commit_info = api.upload_file(
+            api.upload_file(
                 path_or_fileobj=self.local_path,
                 path_in_repo=self.path_in_repo,
                 repo_id=self.repo_id,
                 repo_type=self.args.repo_type,
                 commit_message=self.args.commit_message,
                 commit_description=self.args.commit_description,
+                token=self.args.token,
             )
         elif os.path.isdir(self.local_path):
-            commit_info = api.upload_folder(
+            api.upload_folder(
                 repo_id=self.repo_id,
                 folder_path=self.local_path,
                 path_in_repo=self.path_in_repo,
                 commit_message=self.args.commit_message,
                 commit_description=self.args.commit_description,
                 repo_type=self.args.repo_type,
-                allow_patterns=self.args.include,
-                ignore_patterns=self.args.exclude,
+                allow_patterns=convert_patterns(self.args.include),
+                ignore_patterns=convert_patterns(self.args.exclude),
                 max_workers=self.args.max_workers,
+                token=self.args.token,
             )
         else:
             raise ValueError(f'{self.local_path} is not a valid local path')
 
-        logger.info(f'Upload finished, commit info: {commit_info}')
+        print(f'Finished uploading to {self.repo_id}')

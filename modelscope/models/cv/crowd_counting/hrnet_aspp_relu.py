@@ -370,7 +370,7 @@ class HighResolutionNet(nn.Module):
 
         self.aspp = nn.ModuleList(aspp(in_channel=128))
 
-        # additional layers specfic for Phase 3
+        # additional layers specific for Phase 3
         self.pred_conv = nn.Conv2d(128, 512, 3, padding=1)
         self.pred_bn = nn.BatchNorm2d(512)
         self.GAP = nn.AdaptiveAvgPool2d(1)
@@ -609,7 +609,7 @@ class HighResolutionNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         if os.path.isfile(pretrained):
-            pretrained_dict = torch.load(pretrained)
+            pretrained_dict = torch.load(pretrained, weights_only=True)
             logger.info(f'=> loading pretrained model {pretrained}')
             model_dict = self.state_dict()
             pretrained_dict = {

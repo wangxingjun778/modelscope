@@ -10,13 +10,17 @@ from modelscope.utils.config import ConfigDict, check_config
 from modelscope.utils.constant import (DEFAULT_MODEL_REVISION, Invoke, Tasks,
                                        ThirdParty)
 from modelscope.utils.hub import read_config
+from modelscope.utils.import_utils import is_transformers_available
+from modelscope.utils.logger import get_logger
 from modelscope.utils.plugins import (register_modelhub_repo,
                                       register_plugins_repo)
 from modelscope.utils.registry import Registry, build_from_cfg
+from modelscope.utils.task_utils import is_embedding_task
 from .base import Pipeline
 from .util import is_official_hub_path
 
 PIPELINES = Registry('pipelines')
+logger = get_logger()
 
 
 def normalize_model_input(model,
@@ -72,7 +76,7 @@ def pipeline(task: str = None,
              config_file: str = None,
              pipeline_name: str = None,
              framework: str = None,
-             device: str = 'gpu',
+             device: str = None,
              model_revision: Optional[str] = DEFAULT_MODEL_REVISION,
              ignore_file_pattern: List[str] = None,
              **kwargs) -> Pipeline:
@@ -109,6 +113,7 @@ def pipeline(task: str = None,
     if task is None and pipeline_name is None:
         raise ValueError('task or pipeline_name is required')
 
+    pipeline_props = None
     if pipeline_name is None:
         # get default pipeline for this task
         if isinstance(model, str) \
@@ -157,8 +162,11 @@ def pipeline(task: str = None,
                 if pipeline_name:
                     pipeline_props = {'type': pipeline_name}
                 else:
-                    check_config(cfg)
-                    pipeline_props = cfg.pipeline
+                    try:
+                        check_config(cfg)
+                        pipeline_props = cfg.pipeline
+                    except AssertionError as e:
+                        logger.info(str(e))
 
         elif model is not None:
             # get pipeline info from Model object
@@ -166,9 +174,13 @@ def pipeline(task: str = None,
             if not hasattr(first_model, 'pipeline'):
                 # model is instantiated by user, we should parse config again
                 cfg = read_config(first_model.model_dir)
-                check_config(cfg)
-                first_model.pipeline = cfg.pipeline
-            pipeline_props = first_model.pipeline
+                try:
+                    check_config(cfg)
+                    first_model.pipeline = cfg.pipeline
+                except AssertionError as e:
+                    logger.info(str(e))
+            if first_model.__dict__.get('pipeline'):
+                pipeline_props = first_model.pipeline
         else:
             pipeline_name, default_model_repo = get_default_pipeline_info(task)
             model = normalize_model_input(default_model_repo, model_revision)
@@ -176,6 +188,33 @@ def pipeline(task: str = None,
     else:
         pipeline_props = {'type': pipeline_name}
 
+    if not pipeline_props and is_embedding_task(task):
+        try:
+            from modelscope.utils.hf_util import sentence_transformers_pipeline
+            return sentence_transformers_pipeline(model=model, **kwargs)
+        except Exception:
+            logger.exception(
+                'We could not find a suitable pipeline from modelscope, so we tried to load it using the '
+                'sentence_transformers, but that also failed.')
+            raise
+
+    if not pipeline_props and is_transformers_available():
+        try:
+            from modelscope.utils.hf_util import hf_pipeline
+            return hf_pipeline(
+                task=task,
+                model=model,
+                framework=framework,
+                device=device,
+                **kwargs)
+        except Exception as e:
+            logger.error(
+                'We couldn\'t find a suitable pipeline from ms, so we tried to load it using the transformers pipeline,'
+                ' but that also failed.')
+            raise e
+
+    if not device:
+        device = 'gpu'
     pipeline_props['model'] = model
     pipeline_props['device'] = device
     cfg = ConfigDict(pipeline_props)
@@ -235,13 +274,14 @@ def external_engine_for_llm_checker(model: Union[str, List[str], Model,
                                     kwargs: Dict[str, Any]) -> Optional[str]:
     from .nlp.llm_pipeline import ModelTypeHelper, LLMAdapterRegistry
     from ..hub.check_model import get_model_id_from_cache
-    from swift.llm import get_model_info_meta
     if isinstance(model, list):
         model = model[0]
     if not isinstance(model, str):
         model = model.model_dir
 
-    if kwargs.get('llm_framework') == 'swift':
+    llm_framework = kwargs.get('llm_framework', '')
+    if llm_framework == 'swift':
+        from swift.llm import get_model_info_meta
         # check if swift supports
         if os.path.exists(model):
             model_id = get_model_id_from_cache(model)
@@ -252,9 +292,8 @@ def external_engine_for_llm_checker(model: Union[str, List[str], Model,
             info = get_model_info_meta(model_id)
             model_type = info[0].model_type
         except Exception as e:
-            logger.warning(
-                f'Cannot using llm_framework with {model_id}, '
-                f'ignoring llm_framework={self.llm_framework} : {e}')
+            logger.warning(f'Cannot using llm_framework with {model_id}, '
+                           f'ignoring llm_framework={llm_framework} : {e}')
             model_type = None
         if model_type:
             return 'llm'

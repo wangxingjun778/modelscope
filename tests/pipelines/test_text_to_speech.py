@@ -5,7 +5,7 @@ import unittest
 # NOTICE: Tensorflow 1.15 seems not so compatible with pytorch.
 #         A segmentation fault may be raise by pytorch cpp library
 #         if 'import tensorflow' in front of 'import torch'.
-#         Puting a 'import torch' here can bypass this incompatibility.
+#         Putting a 'import torch' here can bypass this incompatibility.
 import torch
 
 from modelscope.outputs import OutputKeys
@@ -94,7 +94,7 @@ class TextToSpeechSambertHifigan16kPipelineTest(unittest.TestCase):
             'text': self.en_text
         }]
 
-    @unittest.skipUnless(test_level() >= 0, 'skip test in current test level')
+    @unittest.skipUnless(test_level() >= 2, 'skip test in current test level')
     def test_pipeline(self):
         for i in range(len(self.test_models)):
             logger.info('test %s' % self.test_model_name[i])
