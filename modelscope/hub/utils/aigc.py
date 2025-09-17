@@ -281,6 +281,7 @@ class AigcModel:
             cookies: Optional requests-style cookies (CookieJar/dict). If provided, preferred.
             timeout: Request timeout seconds.
             headers: Optional headers.
+            endpoint: Optional custom endpoint, defaults to get_endpoint().
         """
         endpoint = endpoint or get_endpoint()
         endpoint_host: str = urlparse(endpoint.strip()).hostname.lstrip('www.')
