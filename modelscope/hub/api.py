@@ -74,9 +74,9 @@ from modelscope.hub.constants import (API_HTTP_CLIENT_MAX_RETRIES,
                                       VALID_SORT_KEYS, DatasetVisibility,
                                       Licenses, ModelVisibility, Visibility,
                                       VisibilityMap)
-from modelscope.hub.errors import (InvalidParameter, NotExistError,
-                                   NotLoginException, RequestError,
-                                   datahub_raise_on_error,
+from modelscope.hub.errors import (CommitError, InvalidParameter,
+                                   NotExistError, NotLoginException,
+                                   RequestError, datahub_raise_on_error,
                                    handle_http_post_error,
                                    handle_http_response, is_ok,
                                    raise_for_http_status, raise_on_error)
@@ -2340,8 +2340,12 @@ class HubApi:
                 error_detail = response.json()
             except json.JSONDecodeError:
                 error_detail = response.text
-            error_msg = f'HTTP {response.status_code} error from {url}: {error_detail}'
-            raise ValueError(error_msg)
+            raise CommitError(
+                f'HTTP {response.status_code} error from {url}: {error_detail}',
+                http_status_code=response.status_code,
+                url=url,
+                error_detail=error_detail,
+            )
 
         resp = response.json()
         oid = resp.get('Data', {}).get('oid', '')
@@ -2736,15 +2740,10 @@ class HubApi:
                     if 400 <= e.response.status_code < 500:
                         raise
                 last_error = e
-            except ValueError as e:
-                error_str = str(e)
-                if re.search(r'HTTP 4\d{2}', error_str):
-                    retryable_patterns = [
-                        'Could not update refs',
-                        'try again',
-                    ]
-                    if not any(p in error_str for p in retryable_patterns):
-                        raise
+            except CommitError as e:
+                # Structured exception: use attributes directly
+                if not e.is_retryable:
+                    raise
                 last_error = e
             except requests.exceptions.ReadTimeout:
                 # Request body was fully sent to server; only the response

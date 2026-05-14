@@ -219,3 +219,44 @@ def raise_for_http_status(rsp):
         if req.method == 'POST':
             http_error_msg = u'%s, body: %s' % (http_error_msg, req.body)
         raise HTTPError(http_error_msg, response=rsp)
+
+
+class CommitError(ValueError):
+    """Raised when a commit operation fails with an HTTP error.
+
+    Inherits ValueError for backward compatibility with existing callers
+    that catch ValueError from create_commit.
+
+    Attributes:
+        http_status_code: HTTP status code from server response (e.g. 400, 500).
+        url: Request URL that produced the error.
+        error_detail: Parsed response body (dict or str).
+        is_retryable: Whether the error is transient and can be retried.
+    """
+
+    # 4xx error messages considered transient (git ref conflicts, etc.)
+    _RETRYABLE_PATTERNS = ('Could not update refs', 'try again')
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status_code: int = 0,
+        url: str = '',
+        error_detail=None,
+    ):
+        super().__init__(message)
+        self.http_status_code = http_status_code
+        self.url = url
+        self.error_detail = error_detail
+        self.is_retryable = self._determine_retryability()
+
+    def _determine_retryability(self) -> bool:
+        """Determine if error is transient and retryable."""
+        code = self.http_status_code
+        if code >= 500 or code == 429:
+            return True
+        if 400 <= code < 500:
+            detail_str = str(self.error_detail) if self.error_detail else ''
+            return any(p in detail_str for p in self._RETRYABLE_PATTERNS)
+        return False

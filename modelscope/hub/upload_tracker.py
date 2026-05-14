@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import json
 import requests
 
+from modelscope.hub.errors import CommitError
 from modelscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -86,7 +87,22 @@ def classify_error(error: Exception) -> ErrorCategory:
                 return ErrorCategory.TRANSIENT_SERVER
         return ErrorCategory.UNKNOWN
 
-    # ValueError from _commit_with_retry (wraps HTTP status in message)
+    # Structured commit error: use attributes directly
+    if isinstance(error, CommitError):
+        code = error.http_status_code
+        if code == 429:
+            return ErrorCategory.THROTTLED
+        if code in (401, 403):
+            return ErrorCategory.AUTH_FAILED
+        if code == 404:
+            return ErrorCategory.NOT_FOUND
+        if code >= 500:
+            return ErrorCategory.TRANSIENT_SERVER
+        if error.is_retryable:
+            return ErrorCategory.TRANSIENT_SERVER
+        return ErrorCategory.UNKNOWN
+
+    # Legacy ValueError fallback (for backward compatibility)
     if isinstance(error, ValueError):
         if '429' in error_str:
             return ErrorCategory.THROTTLED
