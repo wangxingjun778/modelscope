@@ -2499,6 +2499,101 @@ class HubApi:
             for r in results])
         tracker.save()
 
+    def _commit_batch(
+            self,
+            *,
+            tracker,
+            batch_results: list,
+            repo_id: str,
+            operations,
+            commit_message: str,
+            commit_description=None,
+            token: str = None,
+            repo_type: str = REPO_TYPE_MODEL,
+            revision: str = DEFAULT_REPOSITORY_REVISION,
+    ):
+        """Commit a batch with ReadTimeout-aware state management.
+
+        Implements pessimistic commit assumption: when ReadTimeout occurs
+        (request reached server, response read failed), assumes the commit
+        succeeded and marks files as committed.  This prevents the 20x
+        retry amplification caused by blind retries.
+
+        State transitions:
+            uploaded -> pending_commit -> committed  (success or ReadTimeout)
+            uploaded -> pending_commit -> uploaded   (transient error, for retry)
+            uploaded -> pending_commit -> failed     (permanent error)
+
+        Returns:
+            Tuple of (commit_info_or_None, failed_items_or_None).
+            - (CommitInfo, None): commit succeeded or assumed-succeeded.
+            - (None, list): retryable failure, failed_items for retry queue.
+            - (None, None): permanent failure, files already marked failed.
+        """
+        # Mark files as pending-commit (crash recovery marker)
+        tracker.mark_pending_commit_batch([
+            (r['file_path_in_repo'], r['file_mtime'], r['file_size_on_disk'])
+            for r in batch_results])
+        tracker.save()
+
+        try:
+            commit_info = self._commit_with_retry(
+                repo_id=repo_id,
+                operations=operations,
+                commit_message=commit_message,
+                commit_description=commit_description,
+                token=token,
+                repo_type=repo_type,
+                revision=revision,
+            )
+            # Success: mark all files as committed
+            self._track_committed_batch(tracker, batch_results)
+            return commit_info, None
+
+        except requests.exceptions.ReadTimeout:
+            # Request reached server, response read timed out.
+            # Pessimistic assumption: commit very likely succeeded.
+            self._track_committed_batch(tracker, batch_results)
+            logger.warning(
+                f'Commit ReadTimeout: request reached server, '
+                f'assuming committed. {len(batch_results)} file(s) '
+                f'marked as committed (oid=timeout-assumed).')
+            return CommitInfo(
+                commit_url='',
+                commit_message=commit_message,
+                commit_description=commit_description or '',
+                oid='timeout-assumed-committed',
+            ), None
+
+        except Exception as e:
+            category = classify_error(e)
+            if not category.is_retryable:
+                # Permanent failure: mark files as failed
+                for r in batch_results:
+                    tracker.mark_failed(
+                        r['file_path_in_repo'], r['file_mtime'],
+                        r['file_size_on_disk'],
+                        error_type='commit_' + category.value)
+                tracker.save()
+                logger.error(
+                    f'Commit permanent failure ({category.value}): '
+                    f'{len(batch_results)} file(s) will not be retried.')
+                return None, None
+            else:
+                # Transient failure: revert to uploaded for retry
+                for r in batch_results:
+                    tracker.mark_uploaded(
+                        r['file_path_in_repo'], r['file_mtime'],
+                        r['file_size_on_disk'])
+                tracker.save()
+                failed_items = [
+                    ((r['file_path_in_repo'], r['file_path']), e)
+                    for r in batch_results]
+                logger.warning(
+                    f'Commit transient failure ({category.value}): '
+                    f'{len(batch_results)} file(s) recovered to retry queue.')
+                return None, failed_items
+
     def _upload_single_file(
             self,
             file_path_in_repo: str,
@@ -2651,6 +2746,12 @@ class HubApi:
                     if not any(p in error_str for p in retryable_patterns):
                         raise
                 last_error = e
+            except requests.exceptions.ReadTimeout:
+                # Request body was fully sent to server; only the response
+                # read timed out.  Do NOT retry internally — the server
+                # has very likely already committed.  Propagate immediately
+                # so the caller can apply pessimistic-commit logic.
+                raise
             except Exception as e:
                 last_error = e
 
@@ -2950,47 +3051,29 @@ class HubApi:
 
                     batch_commit_message = (
                         f'{commit_message} (batch {batch_idx + 1}/{num_batches})')
-                    try:
-                        commit_info = self._commit_with_retry(
-                            repo_id=repo_id,
-                            operations=operations,
-                            commit_message=batch_commit_message,
-                            commit_description=commit_description,
-                            token=token,
-                            repo_type=repo_type,
-                            revision=revision,
-                        )
+                    commit_info, failed_items = self._commit_batch(
+                        tracker=tracker,
+                        batch_results=results,
+                        repo_id=repo_id,
+                        operations=operations,
+                        commit_message=batch_commit_message,
+                        commit_description=commit_description,
+                        token=token,
+                        repo_type=repo_type,
+                        revision=revision,
+                    )
+                    if commit_info:
                         commit_infos.append(commit_info)
                         all_results.extend(results)
                         logger.info(
                             f'Batch {batch_idx + 1}/{num_batches}: '
                             f'committed {len(results)} file(s).')
-                        # Mark all files in this batch as committed
-                        self._track_committed_batch(tracker, results)
-                    except Exception as e:
-                        logger.error(
-                            f'Batch {batch_idx + 1}/{num_batches} commit failed: {e}')
-                        category = classify_error(e)
-                        if not category.is_retryable:
-                            # Permanent error: mark files as failed, do not retry
-                            for r in results:
-                                tracker.mark_failed(
-                                    r['file_path_in_repo'], r['file_mtime'],
-                                    r['file_size_on_disk'],
-                                    error_type='commit_' + category.value)
-                            logger.error(
-                                f'Batch {batch_idx + 1}/{num_batches}: '
-                                f'permanent failure ({category.value}), '
-                                f'{len(results)} file(s) will not be retried.')
-                        else:
-                            # Transient error: recover to retry queue
-                            for r in results:
-                                total_failed_files.append(
-                                    ((r['file_path_in_repo'], r['file_path']), e))
-                            logger.warning(
-                                f'Batch {batch_idx + 1}/{num_batches}: '
-                                f'{len(results)} file(s) recovered to retry queue '
-                                f'(error_category={category.value}).')
+                    if failed_items:
+                        total_failed_files.extend(failed_items)
+                        logger.warning(
+                            f'Batch {batch_idx + 1}/{num_batches}: '
+                            f'{len(failed_items)} file(s) recovered '
+                            f'to retry queue.')
         finally:
             tracker.save()
 
@@ -3034,37 +3117,25 @@ class HubApi:
                     operations = self._build_batch_operations(
                         retry_successes, repo_type)
                     if operations:
-                        try:
-                            commit_info = self._commit_with_retry(
-                                repo_id=repo_id,
-                                operations=operations,
-                                commit_message=f'{commit_message} (retry round {retry_round + 1})',
-                                commit_description=commit_description,
-                                token=token,
-                                repo_type=repo_type,
-                                revision=revision)
+                        commit_info, failed_items = self._commit_batch(
+                            tracker=tracker,
+                            batch_results=retry_successes,
+                            repo_id=repo_id,
+                            operations=operations,
+                            commit_message=f'{commit_message} (retry round {retry_round + 1})',
+                            commit_description=commit_description,
+                            token=token,
+                            repo_type=repo_type,
+                            revision=revision,
+                        )
+                        if commit_info:
                             commit_infos.append(commit_info)
                             all_results.extend(retry_successes)
-                            self._track_committed_batch(tracker, retry_successes)
                             logger.info(
                                 f'  Retry round {retry_round + 1}: '
                                 f'committed {len(retry_successes)} file(s).')
-                        except Exception as e:
-                            logger.error(
-                                f'  Retry round {retry_round + 1} commit failed: {e}')
-                            category = classify_error(e)
-                            if not category.is_retryable:
-                                for result in retry_successes:
-                                    tracker.mark_failed(
-                                        result['file_path_in_repo'],
-                                        result['file_mtime'],
-                                        result['file_size_on_disk'],
-                                        error_type='commit_' + category.value)
-                            else:
-                                for result in retry_successes:
-                                    retry_failures.append(
-                                        ((result['file_path_in_repo'],
-                                          result.get('file_path', '')), e))
+                        if failed_items:
+                            retry_failures.extend(failed_items)
                 total_failed_files = retry_failures
 
         # Final tracker save
@@ -3273,37 +3344,24 @@ class HubApi:
                 operations = self._build_batch_operations(batch, repo_type)
                 if not operations:
                     continue
-                try:
-                    commit_info = self._commit_with_retry(
-                        repo_id=repo_id,
-                        operations=operations,
-                        commit_message=(
-                            f'{commit_message} ({round_name})'),
-                        commit_description=commit_description,
-                        token=token,
-                        repo_type=repo_type,
-                        revision=revision)
+                commit_info, failed_items = self._commit_batch(
+                    tracker=tracker,
+                    batch_results=batch,
+                    repo_id=repo_id,
+                    operations=operations,
+                    commit_message=f'{commit_message} ({round_name})',
+                    commit_description=commit_description,
+                    token=token,
+                    repo_type=repo_type,
+                    revision=revision,
+                )
+                if commit_info:
                     commit_infos.append(commit_info)
-                    # Mark committed only after successful commit
-                    self._track_committed_batch(tracker, batch)
                     logger.info(
                         f'[ReAct] {round_name}: '
                         f'committed {len(batch)} file(s).')
-                except Exception as e:
-                    logger.error(
-                        f'[ReAct] {round_name} commit failed: {e}')
-                    category = classify_error(e)
-                    if not category.is_retryable:
-                        for r in batch:
-                            tracker.mark_failed(
-                                r['file_path_in_repo'], r['file_mtime'],
-                                r['file_size_on_disk'],
-                                error_type='commit_' + category.value)
-                    else:
-                        for r in batch:
-                            round_failures.append(
-                                ((r['file_path_in_repo'],
-                                  r['file_path']), e))
+                if failed_items:
+                    round_failures.extend(failed_items)
 
             # OBSERVE: classify new failures, enforce per-file retry limit
             new_retryable = []

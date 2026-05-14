@@ -31,6 +31,7 @@ class FileStatus:
     UPLOADED = 'u'  # Blob uploaded, not yet committed
     COMMITTED = 'c'  # Successfully committed to repo
     FAILED = 'f'  # Upload or commit failed
+    PENDING_COMMIT = 'p'  # Commit attempt in progress, outcome unknown
 
 
 class ErrorCategory(str, Enum):
@@ -217,6 +218,24 @@ class UploadTracker:
                 self._files[key]['status'] = FileStatus.UPLOADED
                 self._dirty = True
 
+    def mark_pending_commit_batch(self, file_keys: List[Tuple[str, float,
+                                                              int]]):
+        """Mark files as pending-commit before a commit attempt.
+
+        Used to track files whose commit outcome is unknown (e.g. after
+        ReadTimeout).  On process restart, 'p' files are treated as
+        uncommitted and will be re-processed.
+
+        Args:
+            file_keys: list of (rel_path, mtime, size) tuples.
+        """
+        with self._lock:
+            for rel_path, mtime, size in file_keys:
+                key = self._make_key(rel_path, mtime, size)
+                if key in self._files:
+                    self._files[key]['status'] = FileStatus.PENDING_COMMIT
+            self._dirty = True
+
     def mark_committed_batch(self, file_keys: List[Tuple[str, float, int]]):
         """Mark multiple files as committed after a successful commit.
 
@@ -321,6 +340,14 @@ class UploadTracker:
             return
 
         self._files = data.get('files', {})
+
+        # Recover pending-commit files: on restart, commit outcome is
+        # unknown, so conservatively revert to uploaded for re-commit.
+        for key, entry in self._files.items():
+            if entry.get('status') == FileStatus.PENDING_COMMIT:
+                entry['status'] = FileStatus.UPLOADED
+                self._dirty = True
+
         committed_count = sum(1 for e in self._files.values()
                               if e.get('status') == FileStatus.COMMITTED)
         if committed_count > 0:
@@ -382,6 +409,9 @@ class NullTracker:
         return None
 
     def mark_uploaded(self, rel_path: str, mtime: float, size: int):
+        pass
+
+    def mark_pending_commit_batch(self, file_keys):
         pass
 
     def mark_committed_batch(self, file_keys):
