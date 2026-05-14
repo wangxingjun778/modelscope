@@ -83,9 +83,9 @@ from modelscope.hub.errors import (CommitError, InvalidParameter,
 from modelscope.hub.git import GitCommandWrapper
 from modelscope.hub.info import DatasetInfo, ModelInfo
 from modelscope.hub.repository import Repository
-from modelscope.hub.upload_cache import UPLOAD_HASH_CACHE_FILE
 from modelscope.hub.upload_pipeline import BatchTracker
-from modelscope.hub.upload_tracker import (_LEGACY_PROGRESS_FILE, NullTracker,
+from modelscope.hub.upload_tracker import (_LEGACY_PROGRESS_FILE,
+                                           UPLOAD_HASH_CACHE_FILE, NullTracker,
                                            UploadTracker, classify_error)
 from modelscope.hub.utils.aigc import AigcModel
 from modelscope.hub.utils.utils import (add_content_to_file, get_domain,
@@ -2488,12 +2488,12 @@ class HubApi:
         return commit_info
 
     def _track_uploaded_batch(self, tracker, results):
-        """Mark files as uploaded and persist tracker state."""
+        """Mark files as uploaded, persisting only at mutation threshold."""
         for r in results:
             tracker.mark_uploaded(
                 r['file_path_in_repo'], r['file_mtime'],
                 r['file_size_on_disk'])
-        tracker.save()
+        tracker.save_if_needed()
 
     def _track_committed_batch(self, tracker, results):
         """Mark files as committed and persist tracker state."""
@@ -2516,21 +2516,17 @@ class HubApi:
             repo_type: str = REPO_TYPE_MODEL,
             revision: str = DEFAULT_REPOSITORY_REVISION,
     ):
-        """Commit a batch with ReadTimeout-aware state management.
-
-        Implements pessimistic commit assumption: when ReadTimeout occurs
-        (request reached server, response read failed), assumes the commit
-        succeeded and marks files as committed.  This prevents the 20x
-        retry amplification caused by blind retries.
+        """Commit a batch with state tracking and ReadTimeout safety.
 
         State transitions:
-            uploaded -> pending_commit -> committed  (success or ReadTimeout)
+            uploaded -> pending_commit -> committed  (success)
+            uploaded -> pending_commit -> pending_commit (ReadTimeout, re-checked on resume)
             uploaded -> pending_commit -> uploaded   (transient error, for retry)
             uploaded -> pending_commit -> failed     (permanent error)
 
         Returns:
             Tuple of (commit_info_or_None, failed_items_or_None).
-            - (CommitInfo, None): commit succeeded or assumed-succeeded.
+            - (CommitInfo, None): commit succeeded, or ReadTimeout (uncertain).
             - (None, list): retryable failure, failed_items for retry queue.
             - (None, None): permanent failure, files already marked failed.
         """
@@ -2556,17 +2552,19 @@ class HubApi:
 
         except requests.exceptions.ReadTimeout:
             # Request reached server, response read timed out.
-            # Pessimistic assumption: commit very likely succeeded.
-            self._track_committed_batch(tracker, batch_results)
+            # Conservative: keep files as pending_commit (set at function
+            # entry).  On process restart, _load() reverts them to
+            # 'uploaded' for re-processing, preventing silent data loss.
+            tracker.save()
             logger.warning(
-                f'Commit ReadTimeout: request reached server, '
-                f'assuming committed. {len(batch_results)} file(s) '
-                f'marked as committed (oid=timeout-assumed).')
+                f'Commit ReadTimeout: {len(batch_results)} file(s) '
+                f'kept as pending_commit. They will be re-processed '
+                f'on next resume if the commit did not actually succeed.')
             return CommitInfo(
                 commit_url='',
                 commit_message=commit_message,
                 commit_description=commit_description or '',
-                oid='timeout-assumed-committed',
+                oid='timeout-pending-commit',
             ), None
 
         except Exception as e:
@@ -2719,14 +2717,22 @@ class HubApi:
         Retries on transient errors (5xx, ConnectionError) and specific
         retryable 4xx errors (e.g. git ref conflicts).
         Raises immediately on non-retryable client errors (4xx).
+
+        Uses a per-call nonce embedded in the commit message body to
+        detect server-side success after a client-side failure, preventing
+        duplicate commits on retry.
         """
+        nonce = uuid.uuid4().hex[:12]
+        nonce_tag = f'[nonce:{nonce}]'
+        commit_message_with_nonce = f'{commit_message}\n\n{nonce_tag}'
+
         last_error = None
         for attempt in range(max_retries):
             try:
                 return self.create_commit(
                     repo_id=repo_id,
                     operations=operations,
-                    commit_message=commit_message,
+                    commit_message=commit_message_with_nonce,
                     commit_description=commit_description,
                     token=token,
                     repo_type=repo_type,
@@ -2734,25 +2740,32 @@ class HubApi:
                 )
             except (ConnectionError, requests.exceptions.ConnectionError) as e:
                 last_error = e
-            # Defensive: create_commit raises ValueError, kept for future-proofing
             except (HTTPError, requests.exceptions.HTTPError) as e:
                 if hasattr(e, 'response') and e.response is not None:
                     if 400 <= e.response.status_code < 500:
                         raise
                 last_error = e
             except CommitError as e:
-                # Structured exception: use attributes directly
                 if not e.is_retryable:
                     raise
                 last_error = e
             except requests.exceptions.ReadTimeout:
-                # Request body was fully sent to server; only the response
-                # read timed out.  Do NOT retry internally — the server
-                # has very likely already committed.  Propagate immediately
-                # so the caller can apply pessimistic-commit logic.
                 raise
-            except Exception as e:
+            except (requests.exceptions.RequestException,
+                    json.JSONDecodeError) as e:
                 last_error = e
+
+            if self._is_commit_already_applied(
+                    repo_id, repo_type, revision, nonce_tag, token):
+                logger.info(
+                    f'Commit nonce {nonce} found on server, '
+                    f'skipping duplicate retry.')
+                return CommitInfo(
+                    commit_url='',
+                    commit_message=commit_message,
+                    commit_description=commit_description or '',
+                    oid='dedup-nonce-verified',
+                )
 
             wait = min(2 ** attempt, 60)
             logger.warning(
@@ -2763,6 +2776,30 @@ class HubApi:
         raise RuntimeError(
             f'Commit failed after {max_retries} attempts: {last_error}'
         ) from last_error
+
+    def _is_commit_already_applied(
+            self,
+            repo_id: str,
+            repo_type: str,
+            revision: str,
+            nonce_tag: str,
+            token: Optional[str] = None,
+    ) -> bool:
+        """Check if a commit with the given nonce exists on server.
+
+        Queries the most recent commits and looks for the nonce tag in
+        the commit message.  Best-effort: returns False on any error
+        so the retry flow is never blocked.
+        """
+        try:
+            history = self.list_repo_commits(
+                repo_id, repo_type=repo_type, revision=revision,
+                page_number=1, page_size=5, token=token)
+            return any(
+                nonce_tag in (c.message or '')
+                for c in (history.commits or []))
+        except Exception:
+            return False
 
     def _build_batch_operations(
             self,
@@ -3007,24 +3044,22 @@ class HubApi:
         # Pipeline: consume batches in order, commit as each becomes ready
         commit_infos: List[CommitInfo] = []
         all_results: List[dict] = []
-        total_failed_files: List[tuple] = []
+        upload_failures: List[tuple] = []
+        commit_retry_batches: List[list] = []
         num_batches = batch_tracker.num_batches
 
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 for file_idx, file_info in files_to_upload:
-                    # Look up pre-validated status by file hash
                     pv = None
                     if file_idx in hash_info_map:
                         cached_hash = hash_info_map[file_idx][0]['file_hash']
                         pv = pre_validated_map.get(cached_hash)
-                        # pv: None=exists(True), str=upload_url
                         if pv is None:
-                            pv = True  # globally existing, skip upload
+                            pv = True
                     executor.submit(_upload_worker, file_idx, file_info, pv)
 
                 for batch_idx in tqdm(range(num_batches), desc='[Committing batches]', total=num_batches):
-                    # Skip fully-committed batches
                     batch_start = batch_idx * commit_batch_size
                     batch_end = min(batch_start + commit_batch_size, len(sorted_files))
                     if all(i in skipped_indices for i in range(batch_start, batch_end)):
@@ -3034,11 +3069,10 @@ class HubApi:
                     results, failures = batch_tracker.wait_for_batch(batch_idx)
 
                     if failures:
-                        total_failed_files.extend(failures)
+                        upload_failures.extend(failures)
                         for item, err in failures:
                             logger.error(f'  Failed: {item[0]} - {err}')
 
-                    # Mark successfully uploaded files in tracker (BEFORE commit attempt)
                     self._track_uploaded_batch(tracker, results)
 
                     operations = self._build_batch_operations(results, repo_type)
@@ -3068,13 +3102,50 @@ class HubApi:
                             f'Batch {batch_idx + 1}/{num_batches}: '
                             f'committed {len(results)} file(s).')
                     if failed_items:
-                        total_failed_files.extend(failed_items)
+                        commit_retry_batches.append(results)
                         logger.warning(
                             f'Batch {batch_idx + 1}/{num_batches}: '
-                            f'{len(failed_items)} file(s) recovered '
-                            f'to retry queue.')
+                            f'{len(failed_items)} file(s) commit failed, '
+                            f'queued for commit-only retry.')
         finally:
             tracker.save()
+
+        # Phase 2: Commit-only retry (blobs already uploaded, skip re-upload)
+        if commit_retry_batches:
+            logger.info(
+                f'Retrying {len(commit_retry_batches)} commit-failed '
+                f'batch(es) without re-upload ...')
+            for batch_results in commit_retry_batches:
+                operations = self._build_batch_operations(
+                    batch_results, repo_type)
+                if not operations:
+                    continue
+                commit_info, failed_items = self._commit_batch(
+                    tracker=tracker,
+                    batch_results=batch_results,
+                    repo_id=repo_id,
+                    operations=operations,
+                    commit_message=f'{commit_message} (commit retry)',
+                    commit_description=commit_description,
+                    token=token,
+                    repo_type=repo_type,
+                    revision=revision,
+                )
+                if commit_info:
+                    commit_infos.append(commit_info)
+                    all_results.extend(batch_results)
+                    logger.info(
+                        f'Commit retry: committed '
+                        f'{len(batch_results)} file(s).')
+                elif failed_items:
+                    upload_failures.extend(failed_items)
+                    logger.warning(
+                        f'Commit retry failed, '
+                        f'{len(failed_items)} file(s) degraded '
+                        f'to upload retry.')
+            tracker.save()
+
+        total_failed_files = upload_failures
 
         # ReAct progressive retry fallback
         if total_failed_files and UPLOAD_REACT_ENABLED:

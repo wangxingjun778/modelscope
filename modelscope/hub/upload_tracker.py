@@ -23,8 +23,12 @@ logger = get_logger()
 # Legacy progress file name (for backward-compat detection only)
 _LEGACY_PROGRESS_FILE = '.ms_upload_progress'
 
+UPLOAD_HASH_CACHE_FILE = '.ms_upload_cache'
+
 # Current cache format version
 _TRACKER_VERSION = 3
+
+_SAVE_MUTATION_THRESHOLD = 50
 
 
 class FileStatus:
@@ -164,6 +168,7 @@ class UploadTracker:
         self._files: Dict[str, dict] = {}
         self._lock = threading.Lock()
         self._dirty = False
+        self._mutations_since_save = 0
         self._load()
 
     @staticmethod
@@ -204,9 +209,9 @@ class UploadTracker:
             entry = self._files.get(key, {})
             entry['hash'] = hash_info['file_hash']
             entry['size'] = hash_info['file_size']
-            # Preserve existing status if any
             self._files[key] = entry
             self._dirty = True
+            self._mutations_since_save += 1
 
     # ---- Status tracking interface (replaces UploadProgress) ----
 
@@ -230,9 +235,11 @@ class UploadTracker:
         """Mark a file as blob-uploaded (not yet committed)."""
         key = self._make_key(rel_path, mtime, size)
         with self._lock:
-            if key in self._files:
-                self._files[key]['status'] = FileStatus.UPLOADED
-                self._dirty = True
+            if key not in self._files:
+                self._files[key] = {}
+            self._files[key]['status'] = FileStatus.UPLOADED
+            self._dirty = True
+            self._mutations_since_save += 1
 
     def mark_pending_commit_batch(self, file_keys: List[Tuple[str, float,
                                                               int]]):
@@ -248,9 +255,11 @@ class UploadTracker:
         with self._lock:
             for rel_path, mtime, size in file_keys:
                 key = self._make_key(rel_path, mtime, size)
-                if key in self._files:
-                    self._files[key]['status'] = FileStatus.PENDING_COMMIT
+                if key not in self._files:
+                    self._files[key] = {}
+                self._files[key]['status'] = FileStatus.PENDING_COMMIT
             self._dirty = True
+            self._mutations_since_save += len(file_keys)
 
     def mark_committed_batch(self, file_keys: List[Tuple[str, float, int]]):
         """Mark multiple files as committed after a successful commit.
@@ -261,9 +270,11 @@ class UploadTracker:
         with self._lock:
             for rel_path, mtime, size in file_keys:
                 key = self._make_key(rel_path, mtime, size)
-                if key in self._files:
-                    self._files[key]['status'] = FileStatus.COMMITTED
+                if key not in self._files:
+                    self._files[key] = {}
+                self._files[key]['status'] = FileStatus.COMMITTED
             self._dirty = True
+            self._mutations_since_save += len(file_keys)
 
     def mark_failed(self,
                     rel_path: str,
@@ -273,16 +284,13 @@ class UploadTracker:
         """Mark a file as failed with optional error classification."""
         key = self._make_key(rel_path, mtime, size)
         with self._lock:
-            if key in self._files:
-                self._files[key]['status'] = FileStatus.FAILED
-                if error_type:
-                    self._files[key]['error_type'] = error_type
-            else:
-                entry = {'status': FileStatus.FAILED}
-                if error_type:
-                    entry['error_type'] = error_type
-                self._files[key] = entry
+            if key not in self._files:
+                self._files[key] = {}
+            self._files[key]['status'] = FileStatus.FAILED
+            if error_type:
+                self._files[key]['error_type'] = error_type
             self._dirty = True
+            self._mutations_since_save += 1
 
     # ---- Persistence ----
 
@@ -298,6 +306,7 @@ class UploadTracker:
                           for k, v in self._files.items()},
             }
             self._dirty = False
+            self._mutations_since_save = 0
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_path = tempfile.mkstemp(
@@ -311,6 +320,18 @@ class UploadTracker:
                 raise
         except Exception as e:
             logger.warning(f'Failed to save upload tracker: {e}')
+
+    def save_if_needed(self):
+        """Save to disk only when mutation threshold is reached.
+
+        Use for intermediate checkpoints (e.g. after marking files uploaded).
+        Critical state changes (commit boundaries) should use save() directly.
+        """
+        with self._lock:
+            if (not self._dirty
+                    or self._mutations_since_save < _SAVE_MUTATION_THRESHOLD):
+                return
+        self.save()
 
     def clear(self):
         """Delete the tracker file."""
@@ -441,6 +462,9 @@ class NullTracker:
         pass
 
     def save(self):
+        pass
+
+    def save_if_needed(self):
         pass
 
     def clear(self):
