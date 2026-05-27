@@ -44,6 +44,8 @@ from datasets.load import (
     get_dataset_builder_class)
 from datasets.packaged_modules import (_EXTENSION_TO_MODULE, _PACKAGED_DATASETS_MODULES)
 from datasets.utils import file_utils
+from datasets.download.streaming_download_manager import (
+    StreamingDownloadManager as HfStreamingDownloadManager)
 from datasets.utils.file_utils import (_raise_if_offline_mode_is_enabled,
                                        cached_path, relative_to_absolute_path)
 from datasets.utils.info_utils import is_small_dataset
@@ -202,6 +204,43 @@ def _download_ms(self, url_or_filename: str, download_config: DownloadConfig) ->
     out = tracked_str(out)
     out.set_origin(url_or_filename)
     return out
+
+
+def _streaming_download_single_ms(self, url_or_filename: str) -> str:
+    """ModelScope replacement for StreamingDownloadManager._download_single.
+
+    Resolves relative paths to ModelScope API endpoints for streaming access.
+    This enables HF's _extract() to produce correct fsspec chained URLs
+    (e.g. "zip://::{https_url}") for remote archive files.
+    """
+    url_or_filename = str(url_or_filename)
+    if url_or_filename.startswith('hf://'):
+        hf_path = url_or_filename[len('hf://'):]
+        for _prefix in ('datasets/', 'models/'):
+            if hf_path.startswith(_prefix):
+                hf_path = hf_path[len(_prefix):]
+                break
+        if '@' in hf_path:
+            at_idx = hf_path.index('@')
+            after_at = hf_path[at_idx + 1:]
+            slash_idx = after_at.find('/')
+            if slash_idx == -1:
+                revision = after_at
+                file_path = ''
+            else:
+                revision = after_at[:slash_idx]
+                file_path = after_at[slash_idx + 1:]
+        else:
+            parts = hf_path.split('/', 2)
+            revision = DEFAULT_DATASET_REVISION
+            file_path = parts[2] if len(parts) > 2 else ''
+        params_str = urlencode({'Source': 'SDK', 'Revision': revision, 'FilePath': file_path})
+        url_or_filename = self._base_path + params_str
+    elif is_relative_path(url_or_filename):
+        revision = DEFAULT_DATASET_REVISION
+        params_str = urlencode({'Source': 'SDK', 'Revision': revision, 'FilePath': url_or_filename})
+        url_or_filename = self._base_path + params_str
+    return url_or_filename
 
 
 # ===================================================================
@@ -1175,6 +1214,7 @@ def load_dataset_with_ctx(*args, **kwargs):
     get_from_cache_origin = file_utils.get_from_cache
     _download_origin = DownloadManager._download if hasattr(DownloadManager, '_download') \
         else DownloadManager._download_single
+    streaming_download_single_origin = HfStreamingDownloadManager._download_single
     dataset_info_origin = HfApi.dataset_info
     list_repo_tree_origin = HfApi.list_repo_tree
     get_paths_info_origin = HfApi.get_paths_info
@@ -1207,6 +1247,8 @@ def load_dataset_with_ctx(*args, **kwargs):
     HfFileSystem.__init__ = _hf_fs_init_with_cookie
 
     streaming = kwargs.get('streaming', False)
+    if streaming:
+        HfStreamingDownloadManager._download_single = _streaming_download_single_ms
 
     try:
         dataset_res = DatasetsWrapperHF.load_dataset(*args, **kwargs)
@@ -1229,6 +1271,7 @@ def load_dataset_with_ctx(*args, **kwargs):
                 DownloadManager._download = _download_origin
             else:
                 DownloadManager._download_single = _download_origin
+            HfStreamingDownloadManager._download_single = streaming_download_single_origin
 
             HfApi.dataset_info = dataset_info_origin
             HfApi.list_repo_tree = list_repo_tree_origin

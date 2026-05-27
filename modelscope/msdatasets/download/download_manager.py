@@ -43,7 +43,12 @@ class DataDownloadManager(DownloadManager):
 
 
 class DataStreamingDownloadManager(StreamingDownloadManager):
-    """The data streaming download manager."""
+    """Streaming download manager that returns remote URLs instead of downloading.
+
+    This enables true streaming: HF's StreamingDownloadManager._extract() will
+    produce fsspec-compatible chained URLs (e.g. "zip://::{https_url}") that
+    support Range Request-based partial reads.
+    """
 
     def __init__(self, download_config: DataDownloadConfig):
         super().__init__(
@@ -51,22 +56,25 @@ class DataStreamingDownloadManager(StreamingDownloadManager):
             data_dir=download_config.data_dir,
             download_config=download_config,
             base_path=download_config.cache_dir)
+        self._oss_utilities = None
 
-    def _download(self, url_or_filename: str) -> str:
-        url_or_filename = str(url_or_filename)
-        oss_utilities = OssUtilities(
-            dataset_name=self.download_config.dataset_name,
-            namespace=self.download_config.namespace,
-            revision=self.download_config.version)
-
-        if is_relative_path(url_or_filename):
-            # fetch oss files
-            return oss_utilities.download(
-                url_or_filename, download_config=self.download_config)
-        else:
-            return cached_path(
-                url_or_filename, download_config=self.download_config)
+    @property
+    def oss_utilities(self) -> 'OssUtilities':
+        """Lazily initialize OssUtilities to avoid unnecessary API calls."""
+        if self._oss_utilities is None:
+            self._oss_utilities = OssUtilities(
+                dataset_name=self.download_config.dataset_name,
+                namespace=self.download_config.namespace,
+                revision=self.download_config.version)
+        return self._oss_utilities
 
     def _download_single(self, url_or_filename: str) -> str:
-        # Note: _download_single function is available for datasets>=2.19.0
-        return self._download(url_or_filename)
+        """Return a remote URL for streaming access instead of downloading.
+
+        For relative paths (OSS files), generates a presigned URL that supports
+        HTTP Range headers. For absolute URLs, returns them as-is.
+        """
+        url_or_filename = str(url_or_filename)
+        if is_relative_path(url_or_filename):
+            return self.oss_utilities.get_signed_url(url_or_filename)
+        return url_or_filename

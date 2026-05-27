@@ -124,6 +124,27 @@ class OssUtilities:
             rate = int(100 * (float(consumed_bytes) / float(total_bytes)))
             print('\r{0}% '.format(rate), end='', flush=True)
 
+    def get_signed_url(self, oss_file_name: str, expires=None) -> str:
+        """Generate a presigned HTTPS URL for direct Range Request access.
+
+        The returned URL supports HTTP Range headers, enabling fsspec to
+        perform partial reads (e.g. ZIP Central Directory) without downloading
+        the entire file.
+
+        Args:
+            oss_file_name: Relative path of the file in OSS.
+            expires: URL validity in seconds. Defaults to the value of
+                environment variable ``MS_DATASET_SIGNED_URL_EXPIRES``,
+                or 86400 (24 hours) if not set.
+
+        Returns:
+            A presigned HTTPS URL that can be accessed without extra auth headers.
+        """
+        if expires is None:
+            expires = int(os.getenv('MS_DATASET_SIGNED_URL_EXPIRES', '86400'))
+        candidate_key = os.path.join(self.oss_dir, oss_file_name)
+        return self.bucket.sign_url('GET', candidate_key, expires)
+
     def download(self, oss_file_name: str,
                  download_config: DataDownloadConfig) -> str:
         """

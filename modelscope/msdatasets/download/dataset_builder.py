@@ -499,10 +499,25 @@ class IterableDatasetBuilder(csv.Csv):
             self._get_meta_csv_df(meta_file_url)
 
             if is_zip:
-                oss_config_for_unzipped = hub_api.get_dataset_access_config_for_unzipped(
-                    self.dataset_name, self.namespace, self.version,
-                    zip_file_name)
-                dl_manager.download_config.oss_config = oss_config_for_unzipped
+                from modelscope.msdatasets.streaming import ArchiveStreamRegistry
+                if ArchiveStreamRegistry.is_streamable_archive(zip_file):
+                    # Convert :FILE column paths to fsspec chained URLs
+                    # Format: zip://path/inside/zip::{presigned_url_of_zip}
+                    presigned_url = dl_manager.oss_utilities.get_signed_url(
+                        zip_file)
+                    for col in self.meta_csv_df.columns:
+                        if col.endswith(':FILE'):
+                            self.meta_csv_df[col] = self.meta_csv_df[
+                                col].apply(
+                                    lambda x: f'zip://{x}::{presigned_url}')
+                    logger.debug(f'Converted :FILE paths to streaming URLs '
+                                 f'for archive: {zip_file}')
+                else:
+                    # Fallback: server-side pre-extraction for unsupported formats
+                    oss_config_for_unzipped = hub_api.get_dataset_access_config_for_unzipped(
+                        self.dataset_name, self.namespace, self.version,
+                        zip_file_name)
+                    dl_manager.download_config.oss_config = oss_config_for_unzipped
 
             pa_table = pa.Table.from_pandas(self.meta_csv_df)
             yield 0, pa_table
