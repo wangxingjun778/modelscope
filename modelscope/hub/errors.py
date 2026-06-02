@@ -15,54 +15,104 @@ logger = get_logger(log_level=logging.WARNING)
 
 
 class NotSupportError(Exception):
-    pass
+    """Requested operation is not supported in the current context (E3023)."""
+    error_code = 'E3023'
+    retryable = False
+    suggestion = 'This operation is not supported. Please check the documentation.'
 
 
 class NoValidRevisionError(Exception):
-    pass
+    """Requested revision does not exist (E2021)."""
+    error_code = 'E2021'
+    retryable = False
+    suggestion = 'The requested revision does not exist. Please verify the version.'
 
 
 class NotExistError(Exception):
-    pass
+    """Resource does not exist (E3020)."""
+    error_code = 'E3020'
+    retryable = False
+    suggestion = 'The requested resource does not exist or has been deleted.'
 
 
 class RequestError(Exception):
     """HTTP request error with structured fields for programmatic handling."""
+    error_code = 'E9001'
+    retryable = False
+    suggestion = 'Unexpected request error. Please retry or report the issue.'
 
     def __init__(self, message, status_code=None, request_id=None, url=None):
         super().__init__(message)
         self.status_code = status_code
         self.request_id = request_id
         self.url = url
+        if status_code is not None:
+            if status_code >= 500:
+                self.error_code = 'E1002'
+                self.retryable = True
+                self.suggestion = 'Server is currently unavailable. Please retry later.'
+            elif status_code == 429:
+                self.error_code = 'E1021'
+                self.retryable = True
+                self.suggestion = 'Rate limit exceeded. Please reduce request frequency.'
+            elif status_code == 404:
+                self.error_code = 'E3020'
+                self.retryable = False
+            elif status_code == 403:
+                self.error_code = 'E3002'
+                self.retryable = False
+            elif status_code == 401:
+                self.error_code = 'E3001'
+                self.retryable = False
 
 
 class GitError(Exception):
-    pass
+    """Git CLI operation failed (E1024)."""
+    error_code = 'E1024'
+    retryable = False
+    suggestion = 'Git operation failed. Please check network and repository permissions.'
 
 
 class InvalidParameter(Exception):
-    pass
+    """Invalid request parameter (E3021)."""
+    error_code = 'E3021'
+    retryable = False
+    suggestion = 'Invalid request parameters. Please check and retry.'
 
 
 class NotLoginException(Exception):
-    pass
+    """User is not logged in (E3022)."""
+    error_code = 'E3022'
+    retryable = False
+    suggestion = 'Please login first: `modelscope login`.'
 
 
 class FileIntegrityError(Exception):
-    pass
+    """File integrity check failed (E2020)."""
+    error_code = 'E2020'
+    retryable = True
+    suggestion = 'File SHA256 checksum mismatch. Will retry automatically.'
 
 
 class FileDownloadError(Exception):
-    pass
+    """File download failed (E1023)."""
+    error_code = 'E1023'
+    retryable = True
+    suggestion = 'File download failed. Please check network connection and retry.'
 
 
 class NetworkError(ConnectionError):
-    """Network-level failure: connection refused, DNS resolution failed, etc. (E1004)."""
-    pass
+    """Network-level failure: connection refused, DNS resolution failed, etc. (E1020)."""
+    error_code = 'E1020'
+    retryable = True
+    suggestion = 'Unable to connect to the server. Please check your network.'
 
 
 class RateLimitError(Exception):
-    """HTTP 429 — request rate exceeded (E1005)."""
+    """HTTP 429 -- request rate exceeded (E1021)."""
+    error_code = 'E1021'
+    retryable = True
+    suggestion = 'Rate limit exceeded. Please reduce request frequency and retry.'
 
     def __init__(self, message=None, retry_after=None):
         super().__init__(message)
@@ -73,9 +123,12 @@ class AccessDeniedError(PermissionError):
     """Base for access control errors (covers both 401 and 403).
 
     Downstream classifiers can catch this for a unified "access denied" semantic
-    (e.g., preview service E2006), or catch the specific subclass for finer
-    granularity (e.g., modelscope_hub E3002/E3003).
+    (e.g., E2003 in dataset context), or catch the specific subclass for finer
+    granularity (E3001 / E3002).
     """
+    error_code = 'E3002'
+    retryable = False
+    suggestion = 'Access denied. Please verify your credentials and permissions.'
 
     def __init__(self, message=None, status_code=None):
         super().__init__(message)
@@ -83,21 +136,30 @@ class AccessDeniedError(PermissionError):
 
 
 class AuthenticationError(AccessDeniedError):
-    """HTTP 401 — authentication token missing, expired, or invalid (E3002)."""
+    """HTTP 401 -- authentication token missing, expired, or invalid (E3001)."""
+    error_code = 'E3001'
+    retryable = False
+    suggestion = 'Authentication failed. Please verify your token is valid.'
 
     def __init__(self, message=None):
         super().__init__(message, status_code=401)
 
 
 class PermissionDeniedError(AccessDeniedError):
-    """HTTP 403 — authenticated but insufficient permissions (E3003)."""
+    """HTTP 403 -- authenticated but insufficient permissions (E3002)."""
+    error_code = 'E3002'
+    retryable = False
+    suggestion = 'Permission denied. Please verify your access rights.'
 
     def __init__(self, message=None):
         super().__init__(message, status_code=403)
 
 
 class SplitNotFoundError(ValueError):
-    """Requested split does not exist in the dataset."""
+    """Requested split does not exist in the dataset (E2004)."""
+    error_code = 'E2004'
+    retryable = False
+    suggestion = 'The requested split does not exist.'
 
     def __init__(self, split, available_splits=None):
         self.split = split if isinstance(split, list) else [split]
@@ -110,7 +172,10 @@ class SplitNotFoundError(ValueError):
 
 
 class UnsupportedFormatError(ValueError):
-    """Data format is not supported."""
+    """Data format is not supported (E2001)."""
+    error_code = 'E2001'
+    retryable = False
+    suggestion = 'This format is not supported. Please check the supported formats list.'
 
     def __init__(self, format_name=None, reason=None):
         self.format_name = format_name
@@ -119,7 +184,10 @@ class UnsupportedFormatError(ValueError):
 
 
 class CacheNotFound(Exception):
-    """Exception thrown when the ModelScope cache is not found."""
+    """Exception thrown when the ModelScope cache is not found (E1022)."""
+    error_code = 'E1022'
+    retryable = False
+    suggestion = 'Local cache directory error. Please check disk space and permissions.'
 
     cache_dir: Union[str, Path]
 
@@ -129,7 +197,10 @@ class CacheNotFound(Exception):
 
 
 class CorruptedCacheException(Exception):
-    """Exception for any unexpected structure in the ModelScope cache-system."""
+    """Exception for any unexpected structure in the ModelScope cache-system (E1022)."""
+    error_code = 'E1022'
+    retryable = False
+    suggestion = 'Local cache directory is corrupted. Please clear cache and retry.'
 
 
 def get_request_id(response: requests.Response):
