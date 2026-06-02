@@ -131,7 +131,9 @@ class OssDownloader(BaseDownloader):
         trust_remote_code = self.dataset_context_config.trust_remote_code
 
         if self.builder is None and not dataset_py_script:
-            raise f'meta-file: {dataset_name}.py not found on the modelscope hub.'
+            raise FileNotFoundError(
+                f'meta-file: {dataset_name}.py not found on the modelscope hub.'
+            )
 
         if dataset_py_script and dataset_formation == DatasetFormations.hf_compatible:
             if trust_remote_code:

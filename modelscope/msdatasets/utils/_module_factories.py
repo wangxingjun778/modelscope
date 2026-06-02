@@ -41,6 +41,7 @@ from huggingface_hub import DatasetCard, DatasetCardData
 from packaging import version
 
 from modelscope import HubApi
+from modelscope.hub.errors import UnsupportedFormatError
 from modelscope.msdatasets.utils._compat import (_create_importable_file,
                                                  _get_importable_file_path,
                                                  _load_importable_file,
@@ -206,8 +207,8 @@ def _resolve_pattern(
 
     try:
         tmp_file_paths = fs.glob(pattern, detail=True, **glob_kwargs)
-    except FileNotFoundError:
-        raise DataFilesNotFoundError(f"Unable to find '{pattern}'")
+    except FileNotFoundError as e:
+        raise DataFilesNotFoundError(f"Unable to find '{pattern}'") from e
 
     matched_paths = [
         filepath if filepath.startswith(protocol_prefix) else protocol_prefix
@@ -323,11 +324,14 @@ def _download_additional_modules(
         import_type in ('internal', 'external')
         for import_type, _, _, _ in imports)
     if has_remote_code and not trust_remote_code:
-        raise ValueError(
-            f'Loading {name} requires executing code from the repository. '
-            'This is disabled by default for security reasons. '
-            'If you trust the authors of this dataset, you can enable it with '
-            '`trust_remote_code=True`.')
+        raise UnsupportedFormatError(
+            reason=(
+                f'Loading {name} requires executing code from the repository. '
+                'This is disabled by default for security reasons. '
+                'If you trust the authors of this dataset, you can enable it with '
+                '`trust_remote_code=True`.'
+            )
+        )
 
     api = _get_hub_api()
     download_config = download_config.copy()
@@ -469,10 +473,12 @@ def _load_script_module(
                 download_mode=download_mode,
             )
         else:
-            raise ValueError(
-                f'Loading {repo_id} requires executing the dataset script in that'
-                ' repo on your local machine. Make sure you have read the code there to avoid malicious use, then'
-                ' set the option `trust_remote_code=True` to remove this error.'
+            raise UnsupportedFormatError(
+                reason=(
+                    f'Loading {repo_id} requires executing the dataset script in that'
+                    ' repo on your local machine. Make sure you have read the code there to avoid malicious use, then'
+                    ' set the option `trust_remote_code=True` to remove this error.'
+                )
             )
     module_path, hash_val = _load_importable_file(
         dynamic_modules_path=dynamic_modules_path,

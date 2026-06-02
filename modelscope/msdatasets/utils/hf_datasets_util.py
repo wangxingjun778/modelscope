@@ -56,6 +56,7 @@ from huggingface_hub.hf_api import HfApi, RepoFile, RepoFolder
 from huggingface_hub.hf_file_system import HfFileSystem
 
 from modelscope import HubApi
+from modelscope.hub.errors import AccessDeniedError, SplitNotFoundError
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.msdatasets.utils.hf_file_utils import get_from_cache_ms
 from modelscope.utils.config_ds import MS_DATASETS_CACHE
@@ -93,6 +94,33 @@ except ImportError:
         LocalDatasetModuleFactoryWithoutScript)
 
 logger = get_logger()
+
+
+def _get_http_status(exc):
+    """Extract HTTP status code from an exception, if available.
+
+    Resolution order:
+    1. exc.response.status_code (requests.HTTPError, httpx.HTTPStatusError,
+       huggingface_hub HfHubHTTPError)
+    2. exc.status_code (modelscope RequestError)
+
+    Returns None if no status code can be determined.
+    """
+    response = getattr(exc, 'response', None)
+    if response is not None:
+        status = getattr(response, 'status_code', None)
+        if status is not None:
+            try:
+                return int(status)
+            except (TypeError, ValueError):
+                pass
+    status = getattr(exc, 'status_code', None)
+    if status is not None:
+        try:
+            return int(status)
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 # ===================================================================
@@ -538,7 +566,7 @@ def _discover_splits_from_builder(builder_instance):
 
 
 def _validate_split_exists(builder_instance, split):
-    """Fail-fast check: raise ValueError before downloading if the
+    """Fail-fast check: raise SplitNotFoundError before downloading if the
     requested split does not exist in the dataset metadata.
 
     Args:
@@ -546,7 +574,7 @@ def _validate_split_exists(builder_instance, split):
         split: The user-requested split specification (may be None).
 
     Raises:
-        ValueError: If any requested split name is not found among
+        SplitNotFoundError: If any requested split name is not found among
             the available splits declared in the dataset metadata.
     """
     if split is None:
@@ -583,9 +611,9 @@ def _validate_split_exists(builder_instance, split):
 
     missing = split_names - available
     if missing:
-        raise ValueError(
-            f'Split {sorted(missing)} not found in dataset. '
-            f'Available splits: {sorted(available)}'
+        raise SplitNotFoundError(
+            split=sorted(missing),
+            available_splits=sorted(available),
         )
 
 
@@ -1034,22 +1062,21 @@ class DatasetsWrapperHF:
                     ):
                         raise ConnectionError(
                             f"Couldn't reach '{path}' on the Hub ({type(e).__name__})"
-                        )
-                    elif '404' in str(e):
+                        ) from e
+                    elif _get_http_status(e) == 404:
                         msg = f"Dataset '{path}' doesn't exist on the Hub"
-                        raise DatasetNotFoundError(
-                            msg
-                            + f" at revision '{revision}'" if revision else msg
-                        )
-                    elif '401' in str(e):
-                        msg = f"Dataset '{path}' doesn't exist on the Hub"
-                        msg = msg + f" at revision '{revision}'" if revision else msg
-                        raise DatasetNotFoundError(
-                            msg + '. If the repo is private or gated, '
-                            'make sure to log in with `huggingface-cli login`.'
-                        )
+                        if revision:
+                            msg += f" at revision '{revision}'"
+                        raise DatasetNotFoundError(msg) from e
+                    elif _get_http_status(e) in (401, 403):
+                        msg = f"Dataset '{path}' is private or gated"
+                        if revision:
+                            msg += f" at revision '{revision}'"
+                        raise AccessDeniedError(
+                            msg + '. Please check your authentication token and access permissions.'
+                        ) from e
                     else:
-                        raise e
+                        raise
 
                 dataset_readme_path = _download_repo_file(
                     repo_id=path,
@@ -1138,7 +1165,7 @@ class DatasetsWrapperHF:
                     if isinstance(e1, OfflineModeIsEnabled):
                         raise ConnectionError(
                             f"Couldn't reach the Hugging Face Hub for dataset '{path}': {e1}"
-                        ) from None
+                        ) from e1
                     if isinstance(e1,
                                   (DataFilesNotFoundError,
                                    DatasetNotFoundError, EmptyDatasetError)):
@@ -1148,7 +1175,7 @@ class DatasetsWrapperHF:
                             f"Couldn't find a dataset script at {relative_to_absolute_path(combined_path)} or "
                             f'any data file in the same directory. '
                             f"Couldn't find '{path}' on the Hugging Face Hub either: {type(e1).__name__}: {e1}"
-                        ) from None
+                        ) from e1
                     raise e1 from None
         else:
             raise FileNotFoundError(

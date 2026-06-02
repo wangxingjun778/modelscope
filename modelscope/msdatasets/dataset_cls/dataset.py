@@ -290,7 +290,7 @@ class VirgoDataset(object):
                                                        None)
             self._odps_utils = self._get_odps_info()
         else:
-            raise 'The meta content must be url or dict.'
+            raise ValueError('The meta content must be url or dict.')
 
     @staticmethod
     def _get_odps_info() -> MaxComputeUtil:
@@ -324,10 +324,14 @@ class VirgoDataset(object):
             2. Condition-2: self._meta_content must be url when self._data_type is 0
         """
         if not self._meta_content:
-            raise 'Them meta content cannot be empty.'
+            raise ValueError('The meta content cannot be empty.')
         if self.data_type not in [0, 1]:
-            raise 'Supported samplingType should be 0 or 1, others are not supported yet.'
+            raise ValueError(
+                'Supported samplingType should be 0 or 1, others are not supported yet.'
+            )
         if self.data_type == 0 and not valid_url(self._meta_content):
-            raise 'The meta content must be url when data type is 0.'
+            raise ValueError(
+                'The meta content must be url when data type is 0.')
         if self.data_type == 1 and not isinstance(self._meta_content, dict):
-            raise 'The meta content must be dict when data type is 1.'
+            raise ValueError(
+                'The meta content must be dict when data type is 1.')

@@ -88,7 +88,9 @@ class LocalDataLoaderManager(DataLoaderManager):
                 download_mode=download_mode.value,
                 streaming=use_streaming,
                 **input_config_kwargs)
-        raise f'Expected local data loader type: {LocalDataLoaderType.HF_DATA_LOADER.value}.'
+        raise ValueError(
+            f'Expected local data loader type: {LocalDataLoaderType.HF_DATA_LOADER.value}.'
+        )
 
 
 class RemoteDataLoaderManager(DataLoaderManager):
@@ -149,5 +151,7 @@ class RemoteDataLoaderManager(DataLoaderManager):
                 use_streaming=use_streaming)
             return oss_downloader.dataset
         else:
-            raise f'Expected remote data loader type: {RemoteDataLoaderType.HF_DATA_LOADER.value}/' \
-                  f'{RemoteDataLoaderType.MS_DATA_LOADER.value}, but got {data_loader_type} .'
+            raise ValueError(
+                f'Expected remote data loader type: {RemoteDataLoaderType.HF_DATA_LOADER.value}/'
+                f'{RemoteDataLoaderType.MS_DATA_LOADER.value}, but got {data_loader_type} .'
+            )

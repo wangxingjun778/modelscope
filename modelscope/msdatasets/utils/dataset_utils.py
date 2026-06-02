@@ -143,7 +143,8 @@ def get_split_list(split: Union[str, list]) -> list:
     elif isinstance(split, list):
         return split
     else:
-        raise f'Expected format of split: str or list, but got {type(split)}.'
+        raise TypeError(
+            f'Expected format of split: str or list, but got {type(split)}.')
 
 
 def get_split_objects_map(file_map, objects):

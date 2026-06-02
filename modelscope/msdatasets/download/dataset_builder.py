@@ -19,6 +19,7 @@ from datasets.utils.py_utils import map_nested
 from filelock import FileLock
 
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import UnsupportedFormatError
 from modelscope.msdatasets.context.dataset_context_config import \
     DatasetContextConfig
 from modelscope.msdatasets.dataset_cls import (ExternalDataset,
@@ -375,7 +376,10 @@ class IterableDatasetBuilder(csv.Csv):
     ) -> Union[Dict[str, IterableDataset], IterableDataset]:
 
         if not isinstance(self, (GeneratorBasedBuilder, ArrowBasedBuilder)):
-            raise ValueError(f'Builder {self.name} is not streamable.')
+            raise UnsupportedFormatError(
+                format_name=self.name,
+                reason=f'Builder {self.name} is not streamable.',
+            )
 
         is_local = not is_remote_filesystem(self._fs)
         if not is_local:
@@ -457,7 +461,9 @@ class IterableDatasetBuilder(csv.Csv):
                         }))
 
         else:
-            raise f'Neither column meta nor data file found in {self.dataset_name}.json, specify at least one column.'
+            raise FileNotFoundError(
+                f'Neither column meta nor data file found in {self.dataset_name}.json, specify at least one column.'
+            )
 
         return splits
 
@@ -512,7 +518,9 @@ class IterableDatasetBuilder(csv.Csv):
             yield 0, pa_table
 
         else:
-            raise f'Neither column meta nor data file found in {self.dataset_name}.json .'
+            raise FileNotFoundError(
+                f'Neither column meta nor data file found in {self.dataset_name}.json .'
+            )
 
     def _get_meta_csv_df(self, meta_file_url: str) -> None:
         if self.meta_csv_df is None or self.meta_csv_df.empty:

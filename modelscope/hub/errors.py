@@ -27,7 +27,13 @@ class NotExistError(Exception):
 
 
 class RequestError(Exception):
-    pass
+    """HTTP request error with structured fields for programmatic handling."""
+
+    def __init__(self, message, status_code=None, request_id=None, url=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = request_id
+        self.url = url
 
 
 class GitError(Exception):
@@ -48,6 +54,33 @@ class FileIntegrityError(Exception):
 
 class FileDownloadError(Exception):
     pass
+
+
+class AccessDeniedError(PermissionError):
+    """Dataset or model access denied due to authentication or authorization failure."""
+    pass
+
+
+class SplitNotFoundError(ValueError):
+    """Requested split does not exist in the dataset."""
+
+    def __init__(self, split, available_splits=None):
+        self.split = split if isinstance(split, list) else [split]
+        self.available_splits = available_splits or []
+        names = ', '.join(f'"{s}"' for s in self.split)
+        msg = f'Split {names} not found.'
+        if self.available_splits:
+            msg += f' Available splits: {self.available_splits}'
+        super().__init__(msg)
+
+
+class UnsupportedFormatError(ValueError):
+    """Data format is not supported."""
+
+    def __init__(self, format_name=None, reason=None):
+        self.format_name = format_name
+        msg = reason or f'Format "{format_name}" is not supported'
+        super().__init__(msg)
 
 
 class CacheNotFound(Exception):
@@ -155,7 +188,11 @@ def raise_on_error(rsp):
     if rsp['Code'] == HTTPStatus.OK:
         return True
     else:
-        raise RequestError(rsp['Message'])
+        raise RequestError(
+            rsp['Message'],
+            status_code=rsp.get('Code'),
+            request_id=rsp.get('RequestId'),
+        )
 
 
 def datahub_raise_on_error(url, rsp, http_response: requests.Response):
@@ -175,10 +212,17 @@ def datahub_raise_on_error(url, rsp, http_response: requests.Response):
     if rsp.get('Code') == HTTPStatus.OK:
         return True
     else:
-        request_id = rsp['RequestId']
+        request_id = rsp.get('RequestId', '')
+        http_status = getattr(http_response, 'status_code',
+                              None) if http_response is not None else None
+        status_code = http_status if http_status and http_status != 200 else rsp.get(
+            'Code')
         raise RequestError(
-            f"Url = {url}, Request id={request_id} Code = {rsp['Code']} Message = {rsp['Message']},\
-                Please specify correct dataset_name and namespace.")
+            rsp.get('Message', 'Unknown error'),
+            status_code=status_code,
+            request_id=request_id,
+            url=url,
+        )
 
 
 def raise_for_http_status(rsp):

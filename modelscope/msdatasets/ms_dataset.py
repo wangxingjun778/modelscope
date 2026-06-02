@@ -238,7 +238,9 @@ class MsDataset:
             namespace = dataset_name_split[0].strip()
             dataset_name = dataset_name_split[1].strip()
             if not namespace or not dataset_name:
-                raise 'The dataset_name should be in the form of `namespace/dataset_name` or `dataset_name`.'
+                raise ValueError(
+                    'The dataset_name should be in the form of `namespace/dataset_name` or `dataset_name`.'
+                )
 
         if trust_remote_code:
             logger.warning(
@@ -377,8 +379,9 @@ class MsDataset:
             return virgo_downloader.dataset
 
         else:
-            raise 'Please adjust input args to specify a loading mode, we support following scenes: ' \
-                  'loading from local disk, huggingface hub and modelscope hub.'
+            raise ValueError(
+                'Please adjust input args to specify a loading mode, we support following scenes: '
+                'loading from local disk, huggingface hub and modelscope hub.')
 
     @staticmethod
     def upload(
