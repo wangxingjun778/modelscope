@@ -56,7 +56,9 @@ from huggingface_hub.hf_api import HfApi, RepoFile, RepoFolder
 from huggingface_hub.hf_file_system import HfFileSystem
 
 from modelscope import HubApi
-from modelscope.hub.errors import AccessDeniedError, SplitNotFoundError
+from modelscope.hub.errors import (AccessDeniedError, AuthenticationError,
+                                   NetworkError, PermissionDeniedError,
+                                   SplitNotFoundError)
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.msdatasets.utils.hf_file_utils import get_from_cache_ms
 from modelscope.utils.config_ds import MS_DATASETS_CACHE
@@ -1060,7 +1062,7 @@ class DatasetsWrapperHF:
                             requests.exceptions.ConnectionError,
                         ),
                     ):
-                        raise ConnectionError(
+                        raise NetworkError(
                             f"Couldn't reach '{path}' on the Hub ({type(e).__name__})"
                         ) from e
                     elif _get_http_status(e) == 404:
@@ -1068,12 +1070,19 @@ class DatasetsWrapperHF:
                         if revision:
                             msg += f" at revision '{revision}'"
                         raise DatasetNotFoundError(msg) from e
-                    elif _get_http_status(e) in (401, 403):
+                    elif _get_http_status(e) == 401:
+                        msg = f"Dataset '{path}' requires authentication"
+                        if revision:
+                            msg += f" at revision '{revision}'"
+                        raise AuthenticationError(
+                            msg + '. Please check your authentication token.'
+                        ) from e
+                    elif _get_http_status(e) == 403:
                         msg = f"Dataset '{path}' is private or gated"
                         if revision:
                             msg += f" at revision '{revision}'"
-                        raise AccessDeniedError(
-                            msg + '. Please check your authentication token and access permissions.'
+                        raise PermissionDeniedError(
+                            msg + '. Please check your access permissions.'
                         ) from e
                     else:
                         raise
@@ -1163,7 +1172,7 @@ class DatasetsWrapperHF:
                         path, **_cached_factory_kwargs).get_module()
                 except Exception:
                     if isinstance(e1, OfflineModeIsEnabled):
-                        raise ConnectionError(
+                        raise NetworkError(
                             f"Couldn't reach the Hugging Face Hub for dataset '{path}': {e1}"
                         ) from e1
                     if isinstance(e1,

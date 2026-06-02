@@ -56,9 +56,44 @@ class FileDownloadError(Exception):
     pass
 
 
-class AccessDeniedError(PermissionError):
-    """Dataset or model access denied due to authentication or authorization failure."""
+class NetworkError(ConnectionError):
+    """Network-level failure: connection refused, DNS resolution failed, etc. (E1004)."""
     pass
+
+
+class RateLimitError(Exception):
+    """HTTP 429 — request rate exceeded (E1005)."""
+
+    def __init__(self, message=None, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class AccessDeniedError(PermissionError):
+    """Base for access control errors (covers both 401 and 403).
+
+    Downstream classifiers can catch this for a unified "access denied" semantic
+    (e.g., preview service E2006), or catch the specific subclass for finer
+    granularity (e.g., modelscope_hub E3002/E3003).
+    """
+
+    def __init__(self, message=None, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class AuthenticationError(AccessDeniedError):
+    """HTTP 401 — authentication token missing, expired, or invalid (E3002)."""
+
+    def __init__(self, message=None):
+        super().__init__(message, status_code=401)
+
+
+class PermissionDeniedError(AccessDeniedError):
+    """HTTP 403 — authenticated but insufficient permissions (E3003)."""
+
+    def __init__(self, message=None):
+        super().__init__(message, status_code=403)
 
 
 class SplitNotFoundError(ValueError):
