@@ -10,7 +10,24 @@ init_loggers = {}
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-default_log_level = int(os.getenv('MODELSCOPE_LOG_LEVEL', str(logging.INFO)))
+
+def _parse_log_level(val: str) -> int:
+    val = val.strip().upper()
+    names = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'WARN': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+    if val in names:
+        return names[val]
+    return int(val)
+
+
+default_log_level = _parse_log_level(
+    os.getenv('MODELSCOPE_LOG_LEVEL', str(logging.INFO)))
 logging.getLogger('numba').setLevel(logging.INFO)
 
 

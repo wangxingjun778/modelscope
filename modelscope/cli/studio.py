@@ -74,7 +74,8 @@ class StudioCMD(CLICommand):
             type=str,
             default=None,
             help='ModelScope server endpoint. Falls back to env '
-            'MODELSCOPE_DOMAIN, then https://www.modelscope.cn.')
+            'MODELSCOPE_ENDPOINT (or deprecated MODELSCOPE_DOMAIN), '
+            'then https://www.modelscope.cn.')
 
         action_subparsers = parser.add_subparsers(
             dest='studio_action', help='Studio subcommands.')

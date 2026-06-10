@@ -39,6 +39,10 @@ def is_env_true(var_name):
 
 
 def get_domain(cn_site=True):
+    endpoint = os.environ.get('MODELSCOPE_ENDPOINT', '').strip()
+    if endpoint:
+        return endpoint.removeprefix('https://').removeprefix(
+            'http://').rstrip('/')
     if MODELSCOPE_DOMAIN in os.environ and os.getenv(MODELSCOPE_DOMAIN):
         return os.getenv(MODELSCOPE_DOMAIN)
     if cn_site:
@@ -216,8 +220,9 @@ def resolve_endpoint(cli_endpoint: Optional[str] = None,
 
     Priority (highest to lowest):
         1. ``cli_endpoint`` (explicit CLI --endpoint argument)
-        2. Environment variable ``MODELSCOPE_DOMAIN``
-        3. Built-in default (https://www.modelscope.cn)
+        2. Environment variable ``MODELSCOPE_ENDPOINT``
+        3. Environment variable ``MODELSCOPE_DOMAIN`` (deprecated)
+        4. Built-in default (https://www.modelscope.cn)
 
     Scheme auto-completion:
         If the resolved value does not start with ``http://`` or ``https://``,

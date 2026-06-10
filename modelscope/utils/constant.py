@@ -2,6 +2,10 @@
 import enum
 import os
 
+from modelscope_hub.constants import ENV_INTRA_CLOUD_ACCELERATION as _ENV_INTRA
+from modelscope_hub.constants import \
+    ENV_INTRA_CLOUD_REGION as _ENV_INTRA_REGION
+
 
 class Fields(object):
     """ Names for different application fields
@@ -513,10 +517,8 @@ DEFAULT_REPOSITORY_REVISION = 'master'
 DEFAULT_DATASET_REVISION = 'master'
 DEFAULT_DATASET_NAMESPACE = 'modelscope'
 DEFAULT_DATA_ACCELERATION_ENDPOINT = 'https://oss-accelerate.aliyuncs.com'
-INTRA_CLOUD_ACCELERATION = str(
-    os.environ.get('INTRA_CLOUD_ACCELERATION', 'True')).lower()
-INTRA_CLOUD_ACCELERATION_REGION = str(
-    os.environ.get('INTRA_CLOUD_ACCELERATION_REGION', '')).lower()
+INTRA_CLOUD_ACCELERATION = os.environ.get(_ENV_INTRA, 'true').lower()
+INTRA_CLOUD_ACCELERATION_REGION = os.environ.get(_ENV_INTRA_REGION, '').lower()
 
 
 class ModeKeys:
