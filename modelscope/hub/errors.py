@@ -186,29 +186,6 @@ def raise_on_error(rsp):
         raise RequestError(rsp['Message'])
 
 
-def datahub_raise_on_error(url, rsp, http_response: requests.Response):
-    """If response error, raise exception
-
-    Args:
-        url (str): The request url
-        rsp (HTTPResponse): The server response.
-        http_response: the origin http response.
-
-    Raises:
-        RequestError: the http request error.
-
-    Returns:
-        bool: `True` if request is OK, otherwise raise `RequestError` exception.
-    """
-    if rsp.get('Code') == HTTPStatus.OK:
-        return True
-    else:
-        request_id = rsp['RequestId']
-        raise RequestError(
-            f"Url = {url}, Request id={request_id} Code = {rsp['Code']} Message = {rsp['Message']},\
-                Please specify correct dataset_name and namespace.")
-
-
 def raise_for_http_status(rsp):
     """Attempt to decode utf-8 first since some servers
     localize reason strings, for invalid utf-8, fall back
