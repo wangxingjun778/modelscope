@@ -181,7 +181,7 @@ class OssUtilities:
                     logger.error(
                         f'Failed to download {oss_file_name} due to exceeded retries.'
                     )
-                    raise e
+                    raise
 
         return local_path
 
@@ -237,6 +237,6 @@ class OssUtilities:
                     logger.error(
                         f'Failed to upload {oss_object_name} due to exceeded retries.'
                     )
-                    raise e
+                    raise
 
         return object_key

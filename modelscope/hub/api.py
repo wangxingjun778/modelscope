@@ -201,7 +201,8 @@ class HubApi(_LegacyHubApi):
     ) -> str:
         """Delete a single object from dataset OSS storage."""
         if not all([object_name, dataset_name, namespace, revision]):
-            raise ValueError('Args cannot be empty!')
+            from modelscope.hub.errors import InvalidParameter
+            raise InvalidParameter('Args cannot be empty!')
         body = self._legacy_request(
             'DELETE',
             f'datasets/{namespace}/{dataset_name}/oss',
@@ -220,7 +221,8 @@ class HubApi(_LegacyHubApi):
     ) -> str:
         """Delete a directory prefix from dataset OSS storage."""
         if not all([object_name, dataset_name, namespace, revision]):
-            raise ValueError('Args cannot be empty!')
+            from modelscope.hub.errors import InvalidParameter
+            raise InvalidParameter('Args cannot be empty!')
         prefix = object_name.rstrip('/') + '/'
         body = self._legacy_request(
             'DELETE',

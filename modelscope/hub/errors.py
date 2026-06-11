@@ -28,11 +28,23 @@ logger = get_logger(log_level=logging.WARNING)
 
 
 class RequestError(APIError):
-    """Legacy alias — use APIError for new code."""
+    """Legacy HTTP request error with structured context.
 
-    def __init__(self, message: str = '', *args, **kwargs):
-        # Preserve legacy single-positional-arg constructor signature.
+    Attributes:
+        status_code: HTTP status code from the response.
+        request_id: Server-side request ID for tracing.
+        url: The request URL that triggered the error.
+        response: The raw response object (optional).
+    """
+
+    def __init__(self, message: str = '', *, status_code: int | None = None,
+                 request_id: str | None = None, url: str | None = None,
+                 response=None, **kwargs):
         super().__init__(message, **kwargs)
+        self.status_code = status_code
+        self.request_id = request_id
+        self.url = url
+        self.response = response
 
 
 class NotLoginException(AuthenticationError):

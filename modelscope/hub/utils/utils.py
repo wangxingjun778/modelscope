@@ -18,6 +18,7 @@ from modelscope.hub.constants import (DEFAULT_MODELSCOPE_DOMAIN,
                                       MODEL_ID_SEPARATOR, MODELSCOPE_DOMAIN,
                                       MODELSCOPE_SDK_DEBUG,
                                       MODELSCOPE_URL_SCHEME)
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -321,7 +322,7 @@ def add_content_to_file(repo,
         if ignore_push_error:
             pass
         else:
-            raise e
+            raise
 
 
 _TIMESINCE_CHUNKS = (
@@ -557,7 +558,7 @@ def encode_media_to_base64(media_file_path: str) -> str:
         raise FileNotFoundError(f'Image file not found: {media_file_path}')
 
     if not os.path.isfile(media_file_path):
-        raise ValueError(f'Path is not a file: {media_file_path}')
+        raise InvalidParameter(f'Path is not a file: {media_file_path}')
 
     # Get MIME type, with fallback for formats that may not be registered
     # in the system's MIME database on some platforms (e.g. Linux servers,
@@ -567,7 +568,7 @@ def encode_media_to_base64(media_file_path: str) -> str:
         mime_type = _FALLBACK_MIME_TYPES.get(
             os.path.splitext(media_file_path)[1].lower())
     if not mime_type:
-        raise ValueError(f'File is not a valid format: {media_file_path}')
+        raise InvalidParameter(f'File is not a valid format: {media_file_path}')
 
     # Read and encode file
     with open(media_file_path, 'rb') as media_file:

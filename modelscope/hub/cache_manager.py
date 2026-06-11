@@ -12,7 +12,8 @@ from typing import Dict, FrozenSet, List, Literal, Optional, Set, Union
 
 from modelscope_hub._cache_manager import clear_cache, scan_cache  # noqa: F401
 
-from modelscope.hub.errors import CacheNotFound, CorruptedCacheException
+from modelscope.hub.errors import (CacheNotFound, CorruptedCacheException,
+                                   InvalidParameter)
 from modelscope.hub.utils.caching import ModelFileSystemCache
 from modelscope.hub.utils.utils import (convert_readable_size,
                                         format_timesince, tabulate)
@@ -379,7 +380,7 @@ def scan_cache_dir(
         )
 
     if cache_dir.is_file():
-        raise ValueError(
+        raise InvalidParameter(
             f'Scan cache expects a directory but found a file: {cache_dir}. Please use `cache_dir` argument or set `MODELSCOPE_CACHE` environment variable.'  # noqa: E501
         )
 
@@ -476,7 +477,7 @@ def _scan_cached_repo(repo_path: Path,
         if repo_id == 'unknown':
             return None  # Skip if repo_id is unknown
     except Exception as e:
-        raise CorruptedCacheException(f'Failed to load cache information: {e}')
+        raise CorruptedCacheException(f'Failed to load cache information: {e}') from e
 
     # Collect file stats and information
     blob_stats = {}  # Track blob file stats

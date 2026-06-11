@@ -8,6 +8,7 @@ import json
 from filelock import FileLock
 
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.msdatasets.context.dataset_context_config import \
     DatasetContextConfig
 from modelscope.msdatasets.meta.data_meta_config import DataMetaConfig
@@ -82,7 +83,7 @@ class DataMetaManager(object):
                 dataset_scripts, dataset_formation = self._fetch_meta_from_hub(
                     dataset_name, namespace, version, meta_cache_dir)
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Expected values of download_mode: '
                 f'{DownloadMode.REUSE_DATASET_IF_EXISTS.value} or '
                 f'{DownloadMode.FORCE_REDOWNLOAD.value}, but got {download_mode} .'

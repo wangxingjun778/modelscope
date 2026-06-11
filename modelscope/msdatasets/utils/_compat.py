@@ -18,6 +18,8 @@ from typing import List, Optional, Tuple
 
 from datasets import DownloadMode, config
 
+from modelscope.hub.errors import InvalidParameter
+
 # ---------------------------------------------------------------------------
 # Try importing script-loading APIs from datasets<4.0
 # ---------------------------------------------------------------------------
@@ -109,7 +111,7 @@ if not _HAS_SCRIPT_LOADING:
                              's3') and parsed.netloc == 'github.com':
             if 'blob' in url_path:
                 if not url_path.endswith('.py'):
-                    raise ValueError(
+                    raise InvalidParameter(
                         f'External import from github at {url_path} should point to a .py file'
                     )
                 url_path = url_path.replace('blob', 'raw')
@@ -271,7 +273,7 @@ if not _HAS_SCRIPT_LOADING:
 
     def _compat_resolve_trust_remote_code(trust_remote_code, repo_id: str):
         if trust_remote_code is None:
-            raise ValueError(
+            raise InvalidParameter(
                 f'The repository for {repo_id} contains custom code which must be '
                 f'executed to correctly load the dataset. You can inspect the repository '
                 f'content at the Hub.\nPlease pass the argument `trust_remote_code=True` '

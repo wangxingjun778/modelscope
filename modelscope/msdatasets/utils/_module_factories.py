@@ -41,6 +41,7 @@ from huggingface_hub import DatasetCard, DatasetCardData
 from packaging import version
 
 from modelscope import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.msdatasets.utils._compat import (_create_importable_file,
                                                  _get_importable_file_path,
                                                  _load_importable_file,
@@ -153,7 +154,7 @@ def get_fs_token_paths(
 ):
     if isinstance(urlpath, (list, tuple, set)):
         if not urlpath:
-            raise ValueError('empty urlpath sequence')
+            raise InvalidParameter('empty urlpath sequence')
         urlpath0 = stringify_path(list(urlpath)[0])
     else:
         urlpath0 = stringify_path(urlpath)
@@ -323,7 +324,7 @@ def _download_additional_modules(
         import_type in ('internal', 'external')
         for import_type, _, _, _ in imports)
     if has_remote_code and not trust_remote_code:
-        raise ValueError(
+        raise InvalidParameter(
             f'Loading {name} requires executing code from the repository. '
             'This is disabled by default for security reasons. '
             'If you trust the authors of this dataset, you can enable it with '
@@ -339,7 +340,7 @@ def _download_additional_modules(
             library_imports.append((import_name, import_path))
             continue
         if import_name == name:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Error in the {name} script, importing relative {import_name} module '
                 f'but {import_name} is the name of the script. '
                 f"Please change relative import {import_name} to another name and add a '# From: URL_OR_PATH' "
@@ -469,7 +470,7 @@ def _load_script_module(
                 download_mode=download_mode,
             )
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Loading {repo_id} requires executing the dataset script in that'
                 ' repo on your local machine. Make sure you have read the code there to avoid malicious use, then'
                 ' set the option `trust_remote_code=True` to remove this error.'
@@ -587,7 +588,7 @@ def _compat_local_script_module(
                 download_mode=download_mode,
             )
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Loading {name} requires executing the dataset script. '
                 'Set `trust_remote_code=True` to allow this.')
     module_path, hash_val = _load_importable_file(

@@ -8,6 +8,7 @@ import datasets
 from datasets import IterableDataset
 from tqdm.auto import tqdm
 
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.constant import EXTENSIONS_TO_LOAD
 from modelscope.utils.logger import get_logger
 
@@ -119,7 +120,7 @@ class NativeIterableDataset(IterableDataset):
             step = index.step
 
         if step is not None and step <= 0:
-            raise ValueError('step must be positive')
+            raise InvalidParameter('step must be positive')
 
         for item in tqdm(
                 islice(

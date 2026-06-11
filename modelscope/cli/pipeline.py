@@ -8,6 +8,7 @@ from string import Template
 
 from modelscope_hub.cli.base import CLICommand
 
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.logger import get_logger
 
 logger = get_logger(log_level=logging.WARNING)
@@ -88,13 +89,13 @@ class PipelineCMD(CLICommand):
             tpl_file_path = os.path.join(template_path,
                                          self.args.tpl_file_path)
         if not os.path.exists(tpl_file_path):
-            raise ValueError('%s not exists!' % tpl_file_path)
+            raise FileNotFoundError('%s not exists!' % tpl_file_path)
 
         save_file_path = self.args.save_file_path if self.args.save_file_path != './' else os.getcwd(
         )
         os.makedirs(save_file_path, exist_ok=True)
         if not self.args.filename.endswith('.py'):
-            raise ValueError('the FILENAME must end with .py ')
+            raise InvalidParameter('the FILENAME must end with .py ')
         save_file_name = self.args.filename
         save_pkl_path = os.path.join(save_file_path, save_file_name)
 
@@ -119,4 +120,4 @@ class PipelineCMD(CLICommand):
         if self.args.action == 'create':
             self.create_template()
         else:
-            raise ValueError('The parameter of action must be in [create]')
+            raise InvalidParameter('The parameter of action must be in [create]')

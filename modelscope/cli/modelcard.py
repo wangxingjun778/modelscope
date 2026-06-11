@@ -11,6 +11,7 @@ from string import Template
 from modelscope_hub.cli.base import CLICommand
 
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.hub.snapshot_download import snapshot_download
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.utils.logger import get_logger
@@ -112,13 +113,13 @@ class ModelCardCMD(CLICommand):
             if not attr.startswith('__')
         ]
         if self.args.visibility not in visibilities:
-            raise ValueError('The access_token must in %s!' % visibilities)
+            raise InvalidParameter('The access_token must in %s!' % visibilities)
         licenses = [
             getattr(Licenses, attr) for attr in dir(Licenses)
             if not attr.startswith('__')
         ]
         if self.args.license not in licenses:
-            raise ValueError('The license must in %s!' % licenses)
+            raise InvalidParameter('The license must in %s!' % licenses)
         try:
             self.api.get_model(self.model_id)
         except Exception as e:
@@ -176,5 +177,5 @@ class ModelCardCMD(CLICommand):
                 cache_dir=self.args.model_dir,
                 revision=self.args.version_tag)
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 'The parameter of action must be in [create, upload]')

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import requests
 from tqdm.auto import tqdm
 
+from modelscope.hub.errors import InvalidParameter
 from modelscope.hub.utils.utils import (MODELSCOPE_URL_SCHEME,
                                         encode_media_to_base64, get_endpoint)
 from modelscope.utils.logger import get_logger
@@ -192,7 +193,8 @@ class AigcModel:
         self.model_path = os.path.expanduser(self.model_path)
 
         if not os.path.exists(self.model_path):
-            raise ValueError(f'Model path does not exist: {self.model_path}')
+            raise FileNotFoundError(
+                f'Model path does not exist: {self.model_path}')
 
         if os.path.isfile(self.model_path):
             target_file = self.model_path
@@ -202,7 +204,7 @@ class AigcModel:
             # they must not be only the common placeholder files
             top_entries = os.listdir(self.model_path)
             if len(top_entries) == 0:
-                raise ValueError(
+                raise InvalidParameter(
                     f'Directory is empty: {self.model_path}. '
                     f'Please place at least one model file at the top level (e.g., .safetensors/.pth/.bin).'
                 )
@@ -217,7 +219,7 @@ class AigcModel:
             if top_files:
                 normalized = {name.lower() for name in top_files}
                 if normalized.issubset(placeholder_names):
-                    raise ValueError(
+                    raise InvalidParameter(
                         'Top-level directory contains only [.gitattributes, configuration.json, README.md]. '
                         'Please place additional model files at the top level (e.g., .safetensors/.pth/.bin).'
                     )
@@ -254,13 +256,13 @@ class AigcModel:
                         os.path.basename(target_file))
                     logger.info('Available files: %s', all_files)
                 else:
-                    raise ValueError(
+                    raise InvalidParameter(
                         f'No files found in directory: {self.model_path}. '
                         f'AIGC models require at least one model file (.safetensors recommended).'
                     )
 
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Model path must be a file or directory: {self.model_path}')
 
         if target_file:
@@ -335,11 +337,11 @@ class AigcModel:
         file_path = getattr(self, 'target_file', None) or self.model_path
         file_path = os.path.abspath(os.path.expanduser(file_path))
         if not os.path.isfile(file_path):
-            raise ValueError(f'Pre-upload expects a file, got: {file_path}')
+            raise InvalidParameter(f'Pre-upload expects a file, got: {file_path}')
 
         cookies = dict(cookies) if cookies else None
         if cookies is None:
-            raise ValueError('Token does not exist, please login first.')
+            raise InvalidParameter('Token does not exist, please login first.')
 
         headers.update({'Cookie': f"m_session_id={cookies['m_session_id']}"})
 
@@ -423,7 +425,7 @@ class AigcModel:
         ]
         for field in required_fields:
             if field not in config:
-                raise ValueError(
+                raise InvalidParameter(
                     f"Missing required field in JSON config: '{field}'")
 
         return cls(**config)

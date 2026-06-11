@@ -62,9 +62,9 @@ class KWSDataset:
     def setup_sims(self, conf_basetrain, conf_finetune, numworkers,
                    basetrainratio):
         if not os.path.exists(conf_basetrain):
-            raise ValueError(f'{conf_basetrain} does not exist!')
+            raise FileNotFoundError(f'{conf_basetrain} does not exist!')
         if not os.path.exists(conf_finetune):
-            raise ValueError(f'{conf_finetune} does not exist!')
+            raise FileNotFoundError(f'{conf_finetune} does not exist!')
         try:
             if sys.version_info >= (3, 11):
                 raise ImportError('Python version needs to be <= 3.10')

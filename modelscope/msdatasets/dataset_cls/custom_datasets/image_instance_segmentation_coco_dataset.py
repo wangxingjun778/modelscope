@@ -341,6 +341,6 @@ class ImageInstanceSegmentationCocoDataset(TorchCustomDataset):
         if isinstance(classes, (tuple, list)):
             class_names = classes
         else:
-            raise ValueError(f'Unsupported type {type(classes)} of classes.')
+            raise InvalidParameter(f'Unsupported type {type(classes)} of classes.')
 
         return class_names

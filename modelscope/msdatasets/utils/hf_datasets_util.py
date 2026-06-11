@@ -56,6 +56,7 @@ from huggingface_hub.hf_api import HfApi, RepoFile, RepoFolder
 from huggingface_hub.hf_file_system import HfFileSystem
 
 from modelscope import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.msdatasets.utils.hf_file_utils import get_from_cache_ms
 from modelscope.utils.config_ds import MS_DATASETS_CACHE
@@ -148,7 +149,7 @@ def generate_from_dict_ms(obj: Any):
     class_type = _FEATURE_TYPES.get(_type, None) or globals().get(_type, None)
 
     if class_type is None:
-        raise ValueError(f"Feature type '{_type}' not found. Available feature types: {list(_FEATURE_TYPES.keys())}")
+        raise InvalidParameter(f"Feature type '{_type}' not found. Available feature types: {list(_FEATURE_TYPES.keys())}")
 
     if class_type == LargeList:
         feature = obj.pop('feature')
@@ -583,7 +584,7 @@ def _validate_split_exists(builder_instance, split):
 
     missing = split_names - available
     if missing:
-        raise ValueError(
+        raise InvalidParameter(
             f'Split {sorted(missing)} not found in dataset. '
             f'Available splits: {sorted(available)}'
         )
@@ -671,11 +672,11 @@ class DatasetsWrapperHF:
         else:
             task = None
         if data_files is not None and not data_files:
-            raise ValueError(
+            raise InvalidParameter(
                 f"Empty 'data_files': '{data_files}'. It should be either non-empty or None (default)."
             )
         if Path(path, config.DATASET_STATE_JSON_FILENAME).exists():
-            raise ValueError(
+            raise InvalidParameter(
                 'You are trying to load a dataset that was saved using `save_to_disk`. '
                 'Please use `load_from_disk` instead.')
 
@@ -882,7 +883,7 @@ class DatasetsWrapperHF:
             ]
             if example_extensions:
                 error_msg += f'\nFor example `data_files={{"train": "path/to/data/train/*.{example_extensions[0]}"}}`'
-            raise ValueError(error_msg)
+            raise InvalidParameter(error_msg)
 
         builder_cls = get_dataset_builder_class(
             dataset_module, dataset_name=dataset_name)
@@ -1034,22 +1035,22 @@ class DatasetsWrapperHF:
                     ):
                         raise ConnectionError(
                             f"Couldn't reach '{path}' on the Hub ({type(e).__name__})"
-                        )
+                        ) from e
                     elif '404' in str(e):
                         msg = f"Dataset '{path}' doesn't exist on the Hub"
                         raise DatasetNotFoundError(
                             msg
                             + f" at revision '{revision}'" if revision else msg
-                        )
+                        ) from e
                     elif '401' in str(e):
                         msg = f"Dataset '{path}' doesn't exist on the Hub"
                         msg = msg + f" at revision '{revision}'" if revision else msg
                         raise DatasetNotFoundError(
                             msg + '. If the repo is private or gated, '
                             'make sure to log in with `huggingface-cli login`.'
-                        )
+                        ) from e
                     else:
-                        raise e
+                        raise
 
                 dataset_readme_path = _download_repo_file(
                     repo_id=path,

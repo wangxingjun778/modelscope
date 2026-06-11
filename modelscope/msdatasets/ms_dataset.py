@@ -10,6 +10,7 @@ from datasets import (Dataset, DatasetDict, Features, IterableDataset,
                       IterableDatasetDict)
 from datasets.packaged_modules import _PACKAGED_DATASETS_MODULES
 
+from modelscope.hub.errors import InvalidParameter
 from modelscope.hub.repository import DatasetRepository
 from modelscope.msdatasets.context.dataset_context_config import \
     DatasetContextConfig
@@ -44,7 +45,7 @@ def format_list(para) -> List:
     elif isinstance(para, str):
         para = [para]
     elif len(set(para)) < len(para):
-        raise ValueError(f'List columns contains duplicates: {para}')
+        raise InvalidParameter(f'List columns contains duplicates: {para}')
     return para
 
 
@@ -238,7 +239,7 @@ class MsDataset:
             namespace = dataset_name_split[0].strip()
             dataset_name = dataset_name_split[1].strip()
             if not namespace or not dataset_name:
-                raise 'The dataset_name should be in the form of `namespace/dataset_name` or `dataset_name`.'
+                raise InvalidParameter('The dataset_name should be in the form of `namespace/dataset_name` or `dataset_name`.')
 
         if trust_remote_code:
             logger.warning(
@@ -355,8 +356,9 @@ class MsDataset:
                 return dataset_inst
 
         else:
-            raise 'Please adjust input args to specify a loading mode, we support following scenes: ' \
-                  'loading from local disk, huggingface hub and modelscope hub.'
+            raise InvalidParameter(
+                'Please adjust input args to specify a loading mode, '
+                'we support following scenes: loading from local disk, huggingface hub and modelscope hub.')
 
     @staticmethod
     def upload(
@@ -403,7 +405,7 @@ class MsDataset:
             'or modelscope.hub.api.HubApi.upload_file.', DeprecationWarning)
 
         if not object_name:
-            raise ValueError('object_name cannot be empty!')
+            raise InvalidParameter('object_name cannot be empty!')
 
         _upload_manager = DatasetUploadManager(
             dataset_name=dataset_name, namespace=namespace, version=version)
@@ -424,7 +426,7 @@ class MsDataset:
                 filter_hidden_files=filter_hidden_files,
                 upload_mode=upload_mode)
         else:
-            raise ValueError(
+            raise FileNotFoundError(
                 f'{local_file_path} is not a valid file path or directory')
 
     @staticmethod

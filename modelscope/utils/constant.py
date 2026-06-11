@@ -605,19 +605,6 @@ class DatasetTensorflowConfig:
     DEFAULT_BATCH_SIZE_VALUE = 5
 
 
-DEFAULT_MAXCOMPUTE_ENDPOINT = 'http://service-corp.odps.aliyun-inc.com/api'
-
-
-class MaxComputeEnvs:
-
-    ACCESS_ID = 'ODPS_ACCESS_ID'
-
-    ACCESS_SECRET_KEY = 'ODPS_ACCESS_SECRET_KEY'
-
-    PROJECT_NAME = 'ODPS_PROJECT_NAME'
-
-    ENDPOINT = 'ODPS_ENDPOINT'
-
 
 class StudioSDKType(object):
     """Studio SDK type enumeration."""

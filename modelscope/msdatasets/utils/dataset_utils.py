@@ -7,6 +7,7 @@ from typing import Optional, Union
 import pandas as pd
 
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.msdatasets.context.dataset_context_config import \
     DatasetContextConfig
 from modelscope.utils.constant import DEFAULT_DATASET_REVISION, MetaDataFields
@@ -58,7 +59,7 @@ def get_target_dataset_structure(dataset_structure: dict,
     # verify dataset subset
     if (subset_name and subset_name not in dataset_structure) or (
             not subset_name and len(dataset_structure.keys()) > 1):
-        raise ValueError(
+        raise InvalidParameter(
             f'subset_name {subset_name} not found. Available: {dataset_structure.keys()}'
         )
     target_subset_name = subset_name
@@ -71,7 +72,7 @@ def get_target_dataset_structure(dataset_structure: dict,
     target_dataset_structure = format_dataset_structure(
         dataset_structure[target_subset_name])
     if split and split not in target_dataset_structure:
-        raise ValueError(
+        raise InvalidParameter(
             f'split {split} not found. Available: {target_dataset_structure.keys()}'
         )
     if split:

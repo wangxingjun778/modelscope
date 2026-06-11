@@ -5,6 +5,7 @@ import numpy as np
 from datasets import Dataset, IterableDataset, concatenate_datasets
 
 from modelscope.metainfo import Models
+from modelscope.hub.errors import InvalidParameter
 from modelscope.msdatasets.dataset_cls.custom_datasets import (
     CUSTOM_DATASETS, TorchCustomDataset)
 from modelscope.utils.constant import Tasks
@@ -32,10 +33,10 @@ class VecoDataset(TorchCustomDataset):
             idx: The index of the dataset
         """
         if self.mode == 'train':
-            raise ValueError(
+            raise InvalidParameter(
                 'Only support switch dataset in the evaluation loop')
         if idx >= len(self.datasets):
-            raise ValueError(
+            raise InvalidParameter(
                 'Index is bigger than the number of the datasets.')
         self._inner_dataset = self.datasets[idx]
 

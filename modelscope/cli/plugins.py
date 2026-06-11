@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 
 from modelscope_hub.cli.base import CLICommand
 
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.plugins import PluginsManager
 
 plugins_manager = PluginsManager()
@@ -75,5 +76,5 @@ class PluginsCMD(CLICommand):
         elif command == 'list':
             plugins_manager.list_plugins(show_all=self.args.all)
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 'Usage: modelscope plugin {install|uninstall|list} ...')

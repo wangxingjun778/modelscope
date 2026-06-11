@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Union
 
 from modelscope.hub.api import HubApi
 from modelscope.hub.constants import Visibility
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.constant import DEFAULT_REPOSITORY_REVISION
 from modelscope.utils.logger import get_logger
 from modelscope.utils.repo_utils import CommitInfo, RepoUtils
@@ -40,11 +41,11 @@ def patch_upload_folder_for_scheduler(scheduler_instance):
         """
         with scheduler_instance.lock:
             if isinstance(folder_path_or_files, list):
-                raise ValueError(
+                raise InvalidParameter(
                     'Uploading multiple files or folders is not supported for scheduled commit.'
                 )
             elif os.path.isfile(folder_path_or_files):
-                raise ValueError(
+                raise InvalidParameter(
                     'Uploading file is not supported for scheduled commit.')
             else:
                 folder_path = Path(folder_path_or_files).expanduser().resolve()
@@ -189,7 +190,8 @@ class CommitScheduler:
 
         self.folder_path = Path(folder_path).expanduser().resolve()
         if not self.folder_path.exists():
-            raise ValueError(f'Folder path does not exist: {folder_path}')
+            raise FileNotFoundError(
+                f'Folder path does not exist: {folder_path}')
 
         self.path_in_repo = path_in_repo or ''
         self.allow_patterns = allow_patterns
@@ -217,7 +219,7 @@ class CommitScheduler:
         self.last_uploaded: Dict[Path, float] = {}
 
         if interval <= 0:
-            raise ValueError(
+            raise InvalidParameter(
                 f'"interval" must be a positive integer, not "{interval}".')
         self.lock = Lock()
         self.interval = interval

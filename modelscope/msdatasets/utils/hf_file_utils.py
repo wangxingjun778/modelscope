@@ -103,7 +103,7 @@ def _request_with_retry_ms(
                 type(err).__name__, method, url, timeout, err,
             )
             if tries > max_retries:
-                raise err
+                raise
             else:
                 logger.info(f'{method} request to {url} timed out, retrying... [{tries/max_retries}]')
                 sleep_time = min(max_wait_time, base_wait_time * 2 ** (tries - 1))  # Exponential backoff

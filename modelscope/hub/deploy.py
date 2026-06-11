@@ -10,9 +10,10 @@ from attrs import asdict, define, field, validators
 from modelscope.hub.api import HubApi, ModelScopeConfig
 from modelscope.hub.constants import (API_RESPONSE_FIELD_DATA,
                                       API_RESPONSE_FIELD_MESSAGE)
-from modelscope.hub.errors import (NotLoginException, NotSupportError,
-                                   RequestError, handle_http_response, is_ok,
-                                   raise_for_http_status)
+from modelscope.hub.errors import (InvalidParameter, NotLoginException,
+                                   NotSupportError, RequestError,
+                                   get_request_id, handle_http_response,
+                                   is_ok, raise_for_http_status)
 from modelscope.hub.utils.utils import get_endpoint
 from modelscope.utils.logger import get_logger
 
@@ -55,7 +56,7 @@ class EASGpuInstanceType(object):
 
 def min_smaller_than_max(instance, attribute, value):
     if value > instance.max_replica:
-        raise ValueError(
+        raise InvalidParameter(
             "'min_replica' value: %s has to be smaller than 'max_replica' value: %s!"
             % (value, instance.max_replica))
 
@@ -236,7 +237,12 @@ class ServiceDeployer(object):
                 data = r.json()[API_RESPONSE_FIELD_DATA]
                 return data
             else:
-                raise RequestError(r.json()[API_RESPONSE_FIELD_MESSAGE])
+                raise RequestError(
+                    r.json().get(API_RESPONSE_FIELD_MESSAGE, ''),
+                    status_code=r.status_code,
+                    request_id=get_request_id(r),
+                    url=r.url,
+                )
         else:
             raise_for_http_status(r)
         return None
@@ -265,7 +271,12 @@ class ServiceDeployer(object):
                 data = r.json()[API_RESPONSE_FIELD_DATA]
                 return data
             else:
-                raise RequestError(r.json()[API_RESPONSE_FIELD_MESSAGE])
+                raise RequestError(
+                    r.json().get(API_RESPONSE_FIELD_MESSAGE, ''),
+                    status_code=r.status_code,
+                    request_id=get_request_id(r),
+                    url=r.url,
+                )
         else:
             raise_for_http_status(r)
         return None
@@ -295,7 +306,12 @@ class ServiceDeployer(object):
                 data = r.json()[API_RESPONSE_FIELD_DATA]
                 return data
             else:
-                raise RequestError(r.json()[API_RESPONSE_FIELD_MESSAGE])
+                raise RequestError(
+                    r.json().get(API_RESPONSE_FIELD_MESSAGE, ''),
+                    status_code=r.status_code,
+                    request_id=get_request_id(r),
+                    url=r.url,
+                )
         else:
             raise_for_http_status(r)
         return None
@@ -330,7 +346,12 @@ class ServiceDeployer(object):
                 data = r.json()[API_RESPONSE_FIELD_DATA]
                 return data
             else:
-                raise RequestError(r.json()[API_RESPONSE_FIELD_MESSAGE])
+                raise RequestError(
+                    r.json().get(API_RESPONSE_FIELD_MESSAGE, ''),
+                    status_code=r.status_code,
+                    request_id=get_request_id(r),
+                    url=r.url,
+                )
         else:
             raise_for_http_status(r)
         return None

@@ -10,6 +10,7 @@ from modelscope_hub.cli.base import CLICommand
 
 from modelscope import model_file_download
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.utils.logger import get_logger
 
 logger = get_logger(log_level=logging.WARNING)
@@ -22,12 +23,12 @@ class LlamafileCMD(CLICommand):
         super().__init__(args)
         self.model_id = self.args.model
         if self.model_id is None or self.model_id.count('/') != 1:
-            raise ValueError(f'Invalid model id [{self.model_id}].')
+            raise InvalidParameter(f'Invalid model id [{self.model_id}].')
         if self.args.file is not None:
             # ignore accuracy if file argument is provided
             self.args.accuracy = None
             if not self.args.file.lower().endswith('.llamafile'):
-                raise ValueError('file argument must ends with ".llamafile".')
+                raise InvalidParameter('file argument must ends with ".llamafile".')
         self.api = HubApi()
 
     @staticmethod
@@ -91,7 +92,7 @@ class LlamafileCMD(CLICommand):
                     '.llamafile') and '-of-' not in file_path.lower():
                 llamafiles.append(file_path)
         if not llamafiles:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Cannot locate a valid llamafile in repo {self.model_id}.')
         logger.info(
             f'list of llamafiles in repo {self.model_id}:\n{llamafiles}.')

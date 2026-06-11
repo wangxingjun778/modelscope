@@ -19,6 +19,7 @@ from datasets.utils.py_utils import map_nested
 from filelock import FileLock
 
 from modelscope.hub.api import HubApi
+from modelscope.hub.errors import InvalidParameter
 from modelscope.msdatasets.context.dataset_context_config import \
     DatasetContextConfig
 from modelscope.msdatasets.dataset_cls import (ExternalDataset,
@@ -120,7 +121,7 @@ class CsvDatasetBuilder(csv.Csv):
 
     def _split_generators(self, dl_manager):
         if not self.config.data_files:
-            raise ValueError(
+            raise InvalidParameter(
                 'At least one data file must be specified, but got none.')
         data_files = dl_manager.download_and_extract(self.config.data_files)
         zip_data_files = dl_manager.download_and_extract(self.zip_data_files)
@@ -375,7 +376,7 @@ class IterableDatasetBuilder(csv.Csv):
     ) -> Union[Dict[str, IterableDataset], IterableDataset]:
 
         if not isinstance(self, (GeneratorBasedBuilder, ArrowBasedBuilder)):
-            raise ValueError(f'Builder {self.name} is not streamable.')
+            raise InvalidParameter(f'Builder {self.name} is not streamable.')
 
         is_local = not is_remote_filesystem(self._fs)
         if not is_local:
@@ -396,7 +397,7 @@ class IterableDatasetBuilder(csv.Csv):
         elif split in splits_generators:
             splits_generator = splits_generators[split]
         else:
-            raise ValueError(
+            raise InvalidParameter(
                 f'Bad split: {split}. Available splits: {list(splits_generators)}'
             )
 

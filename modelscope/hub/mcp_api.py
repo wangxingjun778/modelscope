@@ -10,7 +10,8 @@ from typing import Any, Dict, Optional
 import requests
 
 from modelscope.hub.api import HubApi
-from modelscope.hub.errors import RequestError, raise_for_http_status
+from modelscope.hub.errors import (InvalidParameter, RequestError,
+                                   raise_for_http_status)
 from modelscope.utils.logger import get_logger
 
 # Configure logging
@@ -111,7 +112,7 @@ class MCPApi(HubApi):
         """
 
         if total_count is None or total_count < 1 or total_count > 100:
-            raise ValueError('total_count must be between 1 and 100')
+            raise InvalidParameter('total_count must be between 1 and 100')
 
         body = {
             'filter': filter or {},
@@ -269,7 +270,7 @@ class MCPApi(HubApi):
             }
         """
         if not server_id:
-            raise ValueError('server_id cannot be empty')
+            raise InvalidParameter('server_id cannot be empty')
 
         url = f'{self.mcp_base_url}/{server_id}'
 
