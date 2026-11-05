@@ -4,10 +4,10 @@ import os
 from typing import Dict, Optional, Union
 from urllib.parse import urlparse
 
-from modelscope.hub.api import HubApi, ModelScopeConfig
-from modelscope.hub.constants import FILE_HASH
+from modelscope.hub.api import HubApi
+from modelscope.hub.cache_manager import identify_cached_repo
 from modelscope.hub.git import GitCommandWrapper
-from modelscope.hub.utils.caching import ModelFileSystemCache
+from modelscope.hub.utils.caching import enable_default_hash_validation
 from modelscope.hub.utils.utils import compute_hash
 from modelscope.utils.logger import get_logger
 
@@ -15,7 +15,14 @@ logger = get_logger()
 
 
 def get_model_id_from_cache(model_root_path: str, ) -> str:
-    model_cache = None
+    """Get the model id of a local model directory.
+
+    Git checkouts report their remote; downloaded snapshots report the
+    identity recorded in the cache. The cache is only read, never created.
+
+    Returns:
+        str: The model id, or 'unknown' when it cannot be identified.
+    """
     # download with git
     if os.path.exists(os.path.join(model_root_path, '.git')):
         git_cmd_wrapper = GitCommandWrapper()
@@ -25,9 +32,18 @@ def get_model_id_from_cache(model_root_path: str, ) -> str:
         u_parse = urlparse(git_url)
         model_id = u_parse.path[1:]
     else:  # snapshot_download
-        model_cache = ModelFileSystemCache(model_root_path)
-        model_id = model_cache.get_model_id()
+        model_id = identify_cached_repo(model_root_path) or 'unknown'
     return model_id
+
+
+def _is_same_as_remote(local_path: str, remote_file, verify_hash: bool):
+    if not os.path.isfile(local_path):
+        return False
+    if os.path.getsize(local_path) != remote_file.size:
+        return False
+    if verify_hash and remote_file.sha256:
+        return compute_hash(local_path) == remote_file.sha256
+    return True
 
 
 def check_local_model_is_latest(
@@ -37,71 +53,38 @@ def check_local_model_is_latest(
 ):
     """Check local model repo is latest.
     Check local model repo is same as hub latest version.
+
+    The local files are compared with the latest hub revision by size, and by
+    sha256 for git checkouts or when default hash validation is enabled. This
+    check is advisory: a difference is logged and any failure is ignored.
+    Directories whose model id cannot be identified are skipped without any
+    request; ``user_agent`` is accepted for backward compatibility.
     """
     try:
         model_id = get_model_id_from_cache(model_root_path)
-        model_id = model_id.replace('___', '.')
-        # make headers
-        headers = {
-            'user-agent':
-            ModelScopeConfig.get_user_agent(user_agent=user_agent, )
-        }
+        if model_id == 'unknown':
+            return
         _api = HubApi(timeout=20, token=token)
-        cookies = _api.get_cookies()
-
-        snapshot_header = headers if 'CI_TEST' in os.environ else {
-            **headers,
-            **{
-                'Snapshot': 'True'
-            }
-        }
         try:
-            _, revisions = _api.get_model_branches_and_tags(
-                model_id=model_id, use_cookies=cookies)
-            if len(revisions) > 0:
-                latest_revision = revisions[0]
-            else:
-                latest_revision = 'master'
-        except:  # noqa: E722
+            _, revisions = _api.get_model_branches_and_tags(model_id=model_id)
+            latest_revision = revisions[0] if revisions else 'master'
+        except Exception:
             latest_revision = 'master'
 
-        model_files = _api.get_model_files(
-            model_id=model_id,
-            revision=latest_revision,
-            recursive=True,
-            headers=snapshot_header,
-            use_cookies=cookies,
-        )
-        model_cache = None
-        # download via non-git method
-        if not os.path.exists(os.path.join(model_root_path, '.git')):
-            model_cache = ModelFileSystemCache(model_root_path)
-        for model_file in model_files:
-            if model_file['Type'] == 'tree':
+        verify_hash = enable_default_hash_validation or os.path.exists(
+            os.path.join(model_root_path, '.git'))
+        for remote_file in _api.list_repo_files(
+                model_id, 'model', revision=latest_revision, recursive=True):
+            if remote_file.is_dir:
                 continue
-            # check model_file updated
-            if model_cache is not None:
-                if model_cache.exists(model_file):
-                    continue
-                else:
-                    logger.info(
-                        f'Model file {model_file["Name"]} is different from the latest version `{latest_revision}`,'
-                        f'This is because you are using an older version or the file is updated manually.'
-                    )
-                    break
-            else:
-                if FILE_HASH in model_file:
-                    local_file_hash = compute_hash(
-                        os.path.join(model_root_path, model_file['Path']))
-                    if local_file_hash == model_file[FILE_HASH]:
-                        continue
-                    else:
-                        logger.info(
-                            f'Model file {model_file["Name"]} is different from the latest version `{latest_revision}`,'
-                            f'This is because you are using an older version or the file is updated manually.'
-                        )
-                        break
-    except:  # noqa: E722
+            local_path = os.path.join(model_root_path, remote_file.path)
+            if not _is_same_as_remote(local_path, remote_file, verify_hash):
+                logger.info(
+                    f'Model file {remote_file.path} is different from the latest version `{latest_revision}`,'
+                    f'This is because you are using an older version or the file is updated manually.'
+                )
+                break
+    except Exception:
         pass  # ignore
 
 

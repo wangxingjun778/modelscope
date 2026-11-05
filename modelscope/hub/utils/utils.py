@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Generator, List, Optional, Union
 
 from filelock import BaseFileLock, FileLock, SoftFileLock, Timeout
+from modelscope_hub import get_cache_root
+from modelscope_hub.compat.cache_manager import \
+    find_reusable_legacy_repo_dir as _find_reusable_legacy_repo_dir
 
 from modelscope.hub.constants import (DEFAULT_MODELSCOPE_DOMAIN,
                                       DEFAULT_MODELSCOPE_GROUP,
@@ -180,8 +183,14 @@ def get_readable_folder_size(folder_path: str) -> str:
 
 
 def get_cache_dir(model_id: Optional[str] = None):
-    """cache dir precedence:
+    """Get the legacy SDK cache dir, precedence:
         function parameter > environment > ~/.cache/modelscope/hub
+
+    This is the legacy SDK / SDK-owned cache location and keeps its historical
+    value. It is not where ``snapshot_download`` stores repositories; use the
+    download return value or
+    ``modelscope.hub.cache_manager.resolve_cached_snapshot`` instead.
+
     Args:
         model_id (str, optional): The model id.
     Returns:
@@ -196,10 +205,7 @@ def get_cache_dir(model_id: Optional[str] = None):
 
 def _modelscope_hub_cache_root() -> Path:
     """Cache root used by ``modelscope_hub`` downloads (not SDK ``.../hub``)."""
-    env = os.environ.get('MODELSCOPE_CACHE')
-    if env:
-        return Path(env).expanduser()
-    return Path.home() / '.cache' / 'modelscope'
+    return get_cache_root()
 
 
 def find_reusable_legacy_repo_dir(
@@ -207,63 +213,19 @@ def find_reusable_legacy_repo_dir(
     repo_type: str = 'model',
     cache_dir: Optional[Union[str, Path]] = None,
 ) -> Optional[str]:
-    """Find old on-disk cache layouts that ``modelscope_hub`` download misses.
+    """Find an old flat or unmasked cache layout of ``repo_id``.
 
-    ``modelscope_hub`` reuses ``{cache}/{type}s/{owner}/{safe_name}/`` (dots in
-    ``name`` replaced by ``___``) and writes to
-    ``{cache}/{type}s/{owner}--{name}/snapshots/{rev}/``. Older SDKs also
-    stored repos at:
+    Kept for backward compatibility; downloads and ``local_files_only``
+    lookups already reuse every legacy layout, see
+    ``modelscope_hub.compat.cache_manager.find_reusable_legacy_repo_dir``.
 
-    - ``{cache}/{owner}/{name}/`` (flat, when ``MODELSCOPE_CACHE`` was set)
-    - ``{cache}/hub/{owner}/{name}/`` (pre-``models/`` restructuring)
-    - ``{cache}/{type}s/{owner}/{name}/`` (unsafed name; hub only checks
-      ``safe_name``)
-
-    Returns a non-empty legacy path only when the layouts hub already handles
-    are absent, so callers can pass it as ``local_dir`` and avoid re-download.
+    Returns:
+        The legacy repository directory, or None when absent.
     """
     if not repo_id or '/' not in repo_id:
         return None
-
-    base = Path(cache_dir).expanduser() if cache_dir is not None else \
-        _modelscope_hub_cache_root()
-    segment = f'{repo_type}s' if not repo_type.endswith('s') else repo_type
-    owner, name = repo_id.split('/', 1)
-    safe_name = name.replace('.', '___')
-    safe_id = repo_id.replace('/', '--')
-
-    # Layouts already handled by modelscope_hub — do not override.
-    hub_known = [
-        base / segment / safe_id,
-        base / segment / owner / safe_name,
-    ]
-    for path in hub_known:
-        if _non_empty_dir(path):
-            return None
-
-    # Layouts hub download does not probe today.
-    legacy_candidates = [
-        base / owner / name,
-        base / owner / safe_name,
-        base / 'hub' / owner / name,
-        base / 'hub' / owner / safe_name,
-        base / segment / owner / name,
-    ]
-    for path in legacy_candidates:
-        if _non_empty_dir(path):
-            logger.info('Found legacy cache at %s for %s, reusing.', path,
-                        repo_id)
-            return str(path)
-    return None
-
-
-def _non_empty_dir(path: Path) -> bool:
-    if not path.is_dir():
-        return False
-    try:
-        return any(path.iterdir())
-    except OSError:
-        return False
+    return _find_reusable_legacy_repo_dir(
+        repo_id, repo_type=repo_type, cache_dir=cache_dir)
 
 
 def get_release_datetime():

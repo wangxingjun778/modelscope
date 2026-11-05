@@ -6,11 +6,14 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
+import json
+from modelscope_hub import DownloadRetryPolicy
 from modelscope_hub.config import HubConfig
 from tests.hub.test_hub_retry import _response
 
 from modelscope.hub.api import HubApi
 from modelscope.hub.callback import ProgressCallback
+from modelscope.hub.errors import FileDownloadError, NetworkError
 from modelscope.hub.file_download import model_file_download
 from modelscope.hub.snapshot_download import snapshot_download
 from modelscope.utils.constant import ModelFile
@@ -256,6 +259,87 @@ class HubRevisionTest(unittest.TestCase):
             sum(value for kind, value in events if kind == 'update'),
             len(content))
         self.assertEqual(events[-1], ('end', ModelFile.README))
+
+    def test_report_mode_persists_and_recovers_failed_files(self):
+        self.transport.files['master']['broken.bin'] = b'payload'
+        original_send = self.transport.send
+
+        def fail_file(request, **kwargs):
+            query = parse_qs(urlparse(request.url).query)
+            if query.get('FilePath') == ['broken.bin']:
+                return _response(request, 403, b'fixture permission denied')
+            return original_send(request, **kwargs)
+
+        tracker = Path(self.temp.name) / 'state.json'
+        kwargs = {
+            'continue_on_error': True,
+            'tracker_path': str(tracker),
+            'retry_policy': DownloadRetryPolicy(max_retries=0),
+        }
+        with patch('requests.sessions.Session.send', side_effect=fail_file):
+            output = self._snapshot(**kwargs)
+        self.assertTrue((output / ModelFile.README).is_file())
+        self.assertFalse((output / 'broken.bin').exists())
+        state = json.loads(tracker.read_text())
+        self.assertEqual(state['report']['status'], 'PARTIAL')
+        stamp = (output / ModelFile.README).stat().st_mtime_ns
+        self.assertEqual(self._snapshot(retry_failed=True, **kwargs), output)
+        self.assertEqual((output / 'broken.bin').read_bytes(), b'payload')
+        self.assertEqual((output / ModelFile.README).stat().st_mtime_ns, stamp)
+        self.assertEqual(
+            json.loads(tracker.read_text())['report']['status'], 'COMPLETE')
+
+    def test_aggregate_failure_keeps_sdk_catch_and_details(self):
+        self.transport.files['master']['broken.bin'] = b'payload'
+        original_send = self.transport.send
+
+        def fail_file(request, **kwargs):
+            query = parse_qs(urlparse(request.url).query)
+            if query.get('FilePath') == ['broken.bin']:
+                return _response(request, 403, b'fixture permission denied')
+            return original_send(request, **kwargs)
+
+        with patch('requests.sessions.Session.send', side_effect=fail_file), \
+                patch('urllib3.util.retry.Retry.sleep'), \
+                self.assertRaises(FileDownloadError) as caught:
+            self._snapshot()
+        error = caught.exception
+        self.assertIsInstance(error, NetworkError)
+        self.assertEqual(set(error.failed_files), {'broken.bin'})
+        self.assertEqual(error.total, 2)
+        self.assertTrue((Path(error.output_dir) / ModelFile.README).is_file())
+
+    def test_single_file_callback_and_prepared_request_user_agent(self):
+        events = []
+
+        class Capture(ProgressCallback):
+
+            def update(self, size):
+                events.append(size)
+
+            def end(self):
+                events.append('end')
+
+        path = model_file_download(
+            self.model_id,
+            ModelFile.README,
+            'master',
+            cache_dir=self.temp.name,
+            endpoint=self.transport.endpoint,
+            token='fixture-token',
+            user_agent={'application': 'example'},
+            progress_callbacks=[Capture])
+        self.assertEqual(
+            sum(size for size in events if isinstance(size, int)),
+            Path(path).stat().st_size)
+        self.assertEqual(events[-1], 'end')
+        for request in self.transport.requests:
+            self.assertIn('invoked_by/compat', request.headers['User-Agent'])
+            self.assertIn('application/example', request.headers['User-Agent'])
+            if parse_qs(urlparse(request.url).query).get('FilePath'):
+                self.assertEqual(
+                    request.headers.get('Authorization'),
+                    'Bearer fixture-token')
 
     def test_sdk_cli_download_uses_hub_engine(self):
         from modelscope.cli.cli import run_cmd

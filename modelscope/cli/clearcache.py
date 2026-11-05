@@ -4,17 +4,15 @@
 The ``modelscope_hub`` CLI now owns ``clear-cache`` as an alias for
 ``cache clear``, but this module preserves the legacy :class:`ClearCacheCMD`
 class so that existing tests and callers that import it directly continue
-to work.
+to work. Both rely on the same ``modelscope_hub`` planner: only identified
+repository caches are deleted, after the exact paths have been confirmed.
 """
-import os
-import shutil
 from argparse import ArgumentParser
 
 from modelscope.cli.base import CLICommand
-from modelscope.hub.constants import TEMPORARY_FOLDER_NAME
-from modelscope.utils.file_utils import (get_dataset_cache_root,
-                                         get_model_cache_root,
-                                         get_modelscope_cache_dir)
+from modelscope.hub.cache_manager import execute_cache_clear, plan_cache_clear
+from modelscope.hub.utils.utils import convert_readable_size
+from modelscope.utils.file_utils import get_hub_cache_root
 
 
 def subparser_func(args):
@@ -28,7 +26,7 @@ class ClearCacheCMD(CLICommand):
 
     def __init__(self, args):
         self.args = args
-        self.cache_dir = get_modelscope_cache_dir()
+        self.cache_dir = get_hub_cache_root()
 
     @staticmethod
     def register(subparsers) -> None:
@@ -45,14 +43,18 @@ class ClearCacheCMD(CLICommand):
             '--model',
             type=str,
             help='The id of the model whose cache will be cleared. '
-            'If neither model or dataset id is provided, entire cache '
-            'will be cleared.')
+            'If neither model or dataset id is provided, the caches of all '
+            'identified models and datasets will be cleared.')
         group.add_argument(
             '--dataset',
             type=str,
             help='The id of the dataset whose cache will be cleared. '
-            'If neither model or dataset id is provided, entire cache '
-            'will be cleared.')
+            'If neither model or dataset id is provided, the caches of all '
+            'identified models and datasets will be cleared.')
+        parser.add_argument(
+            '--dry-run',
+            action='store_true',
+            help='Show the cache paths that would be deleted, delete nothing.')
 
         parser.set_defaults(func=subparser_func)
 
@@ -60,64 +62,35 @@ class ClearCacheCMD(CLICommand):
         self._execute_with_confirmation()
 
     def _execute_with_confirmation(self):
-        all = False
-        single_model = False
-        prompt = '\nYou are about to delete '
-
-        if self.args.model or self.args.dataset:
-            if self.args.model:
-                id = self.args.model
-                single_model = True
-                prompt = prompt + f'local cache for model {id}. '
-            else:
-                id = self.args.dataset
-                prompt = prompt + f'local cache for dataset {id}. '
+        model = getattr(self.args, 'model', None)
+        dataset = getattr(self.args, 'dataset', None)
+        # Compare with None: an empty id is rejected by the planner instead of
+        # widening the scope to the whole cache.
+        if model is not None:
+            repo_type, repo_id, scope = 'model', model, f'model {model}'
+        elif dataset is not None:
+            repo_type, repo_id, scope = 'dataset', dataset, f'dataset {dataset}'
         else:
-            prompt = prompt + (f'entire ModelScope cache at {self.cache_dir}, '
-                               f'including ALL models and dataset.\n')
-            all = True
-        user_input = input(
-            prompt
-            + '\nPlease press Y or y to proceed, any other key to abort.\n'
-        ).strip().upper()
+            repo_type, repo_id, scope = None, None, 'all models and datasets'
 
-        if user_input == 'Y':
-            if all:
-                self._remove_directory(self.cache_dir)
-                print('Cache cleared.')
-            else:
-                entity_root = get_model_cache_root(
-                ) if single_model else get_dataset_cache_root()
-                entity_directory = os.path.join(entity_root, id)
-                temp_directory = os.path.join(entity_root,
-                                              TEMPORARY_FOLDER_NAME, id)
-                entity_removed = self._remove_directory(entity_directory)
-                temp_removed = self._remove_directory(temp_directory)
-                if (not entity_removed) and (not temp_removed):
-                    if single_model:
-                        print(
-                            f'Cache for Model {id} not found. Nothing to do.')
-                    else:
-                        print(
-                            f'Cache for Dataset {id} not found. Nothing to do.'
-                        )
-                else:
-                    print('Cache cleared.')
-        else:
-            print('Operation aborted.')
+        plan = plan_cache_clear(self.cache_dir, repo_type, repo_id)
+        if not plan.targets:
+            print(f'Cache for {scope} not found in {plan.cache_dir}. '
+                  'Nothing to do.')
+            return
+        print(f'\nYou are about to delete the local cache for {scope} '
+              f'in {plan.cache_dir}:')
+        for target in plan.targets:
+            print(f'  {target.path} ({convert_readable_size(target.size)})')
+        if getattr(self.args, 'dry_run', False):
+            print('Dry run, nothing deleted.')
             return
 
-    def _remove_directory(self, path):
-        if os.path.exists(path):
-            try:
-                if os.path.islink(path):
-                    shutil.rmtree(os.readlink(path))
-                    os.remove(path)
-                    print(f'Cache and link for {path} removed.')
-                else:
-                    shutil.rmtree(path)
-                    print(f'Cache folder {path} removed.')
-                return True
-            except Exception as e:
-                print(f'An error occurred while clearing cache at {path}: {e}')
-            return False
+        user_input = input(
+            '\nPlease press Y or y to proceed, any other key to abort.\n'
+        ).strip().upper()
+        if user_input != 'Y':
+            print('Operation aborted.')
+            return
+        freed = execute_cache_clear(plan)
+        print(f'Cache cleared, {convert_readable_size(freed)} freed.')

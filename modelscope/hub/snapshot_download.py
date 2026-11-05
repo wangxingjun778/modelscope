@@ -2,9 +2,11 @@
 
 Delegates to ``modelscope_hub.compat`` while keeping ``revision``, ``cache_dir``
 and friends accessible as positional arguments for backward compatibility.
+Arguments added after the legacy ``endpoint`` parameter are keyword-only.
+Cache layout, legacy cache reuse, offline lookup and report/recovery modes are
+implemented by ``modelscope_hub``; this module only adapts arguments.
 """
 from __future__ import annotations
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Type, Union
 
@@ -13,48 +15,16 @@ from modelscope_hub.compat.snapshot_download import \
 from modelscope_hub.compat.snapshot_download import \
     snapshot_download as _compat_snapshot_download
 
-from modelscope.hub.utils.utils import find_reusable_legacy_repo_dir
-from modelscope.utils.logger import get_logger
-
 if TYPE_CHECKING:
-    from .callback import ProgressCallback
+    from modelscope_hub import DownloadRetryPolicy
 
-logger = get_logger()
+    from .callback import ProgressCallback
 
 __all__ = ['snapshot_download', 'dataset_snapshot_download']
 
-# Capability probe: pre-1.38 cache auto-detection lives in modelscope-hub
-# (DownloadManager._find_legacy_repo_dir, added in modelscope-hub>=0.1.7).
-# Warn once if the installed hub predates it, so an existing legacy cache is
-# not silently ignored and re-downloaded into the new layout.
-_legacy_cache_capability: Optional[bool] = None
-_legacy_cache_lock = threading.Lock()
 
-
-def _warn_if_legacy_cache_detection_unavailable() -> None:
-    """Warn once when the installed modelscope-hub cannot auto-detect a
-    pre-1.38 (legacy) cache layout, so downloads don't silently skip an
-    existing local cache and re-fetch into the new layout.
-    """
-    global _legacy_cache_capability
-    if _legacy_cache_capability is not None:
-        return
-    with _legacy_cache_lock:
-        if _legacy_cache_capability is not None:
-            return
-        try:
-            from modelscope_hub._download import DownloadManager
-            _legacy_cache_capability = hasattr(DownloadManager,
-                                               '_find_legacy_repo_dir')
-        except Exception:
-            _legacy_cache_capability = False
-        if not _legacy_cache_capability:
-            logger.warning(
-                'The installed modelscope-hub lacks legacy cache '
-                'auto-detection (added in modelscope-hub>=0.1.7). An existing '
-                'pre-1.38 cache will not be reused; files will be downloaded '
-                'into the new cache layout. Upgrade with: '
-                "pip install -U 'modelscope-hub>=0.1.8'.")
+def _to_str(path: Union[str, Path, None]) -> Optional[str]:
+    return str(path) if path is not None else None
 
 
 def snapshot_download(
@@ -66,7 +36,7 @@ def snapshot_download(
     cookies=None,
     ignore_file_pattern: Optional[Union[str, List[str]]] = None,
     allow_file_pattern: Optional[Union[str, List[str]]] = None,
-    local_dir: Optional[str] = None,
+    local_dir: Union[str, Path, None] = None,
     allow_patterns: Optional[Union[List[str], str]] = None,
     ignore_patterns: Optional[Union[List[str], str]] = None,
     max_workers: Optional[int] = None,
@@ -75,40 +45,66 @@ def snapshot_download(
     progress_callbacks: Optional[List[Type[ProgressCallback]]] = None,
     token: Optional[str] = None,
     endpoint: Optional[str] = None,
+    *,
+    continue_on_error: bool = False,
+    tracker_path: Optional[str] = None,
+    retry_failed: bool = False,
+    retry_policy: Optional[DownloadRetryPolicy] = None,
+    reuse_legacy_cache: bool = True,
 ) -> str:
-    """Download a complete repo snapshot.
+    """Download a complete repo snapshot and return its local directory.
 
     Preserves the legacy positional-argument signature for backward
     compatibility while delegating to ``modelscope_hub.compat``.
-    ``progress_callbacks`` is a list of :class:`ProgressCallback` subclasses
-    (not instances), each instantiated per file to report download progress.
+
+    Args:
+        model_id: The model id; ``repo_id`` takes precedence when both are set.
+        revision: Branch, tag or commit. Defaults to ``master``.
+        cache_dir: The total cache root. Repositories are stored below it in
+            the ``modelscope_hub`` layout; it is not the repository directory.
+        local_dir: Download the repository files directly into this directory.
+        local_files_only: Return the cached snapshot without network access.
+        progress_callbacks: A list of :class:`ProgressCallback` subclasses
+            (not instances), each instantiated per file to report progress.
+        continue_on_error: Keep downloading after individual file failures and
+            persist a resumable report; the output directory is returned even
+            when the report is partial.
+        tracker_path: Location of the report state file. Requires
+            ``continue_on_error=True``.
+        retry_failed: Retry only the files recorded as failed by a previous
+            report. Requires ``continue_on_error=True``.
+        retry_policy: Retry policy of report-mode downloads. Requires
+            ``continue_on_error=True``.
+        reuse_legacy_cache: Reuse repositories cached by older SDK versions.
+            Legacy folders are not isolated per revision; pass ``False`` to use
+            revision-specific snapshots only.
+
+    Returns:
+        str: The local directory of the snapshot.
     """
-    _warn_if_legacy_cache_detection_unavailable()
-    effective_id = repo_id or model_id
-    effective_type = repo_type or 'model'
-    cache_dir_str = str(cache_dir) if cache_dir is not None else None
-    if local_dir is None and effective_id is not None:
-        local_dir = find_reusable_legacy_repo_dir(
-            effective_id, repo_type=effective_type, cache_dir=cache_dir_str)
     return _compat_snapshot_download(
         model_id=model_id,
+        repo_id=repo_id,
+        repo_type=repo_type,
         revision=revision,
-        cache_dir=cache_dir_str,
-        local_dir=local_dir,
+        cache_dir=_to_str(cache_dir),
+        local_dir=_to_str(local_dir),
         allow_file_pattern=allow_file_pattern,
         ignore_file_pattern=ignore_file_pattern,
         allow_patterns=allow_patterns,
         ignore_patterns=ignore_patterns,
         max_workers=max_workers if max_workers is not None else 4,
         cookies=cookies,
-        repo_id=repo_id,
-        repo_type=repo_type,
         token=token,
         endpoint=endpoint,
-        local_files_only=bool(local_files_only)
-        if local_files_only is not None else False,
+        local_files_only=bool(local_files_only),
         user_agent=user_agent,
         progress_callbacks=progress_callbacks,
+        continue_on_error=continue_on_error,
+        tracker_path=tracker_path,
+        retry_failed=retry_failed,
+        retry_policy=retry_policy,
+        reuse_legacy_cache=reuse_legacy_cache,
     )
 
 
@@ -116,7 +112,7 @@ def dataset_snapshot_download(
     dataset_id: Optional[str] = None,
     revision: Optional[str] = None,
     cache_dir: Union[str, Path, None] = None,
-    local_dir: Optional[str] = None,
+    local_dir: Union[str, Path, None] = None,
     allow_file_pattern: Optional[Union[str, List[str]]] = None,
     ignore_file_pattern: Optional[Union[str, List[str]]] = None,
     allow_patterns: Optional[Union[List[str], str]] = None,
@@ -126,19 +122,29 @@ def dataset_snapshot_download(
     repo_id: Optional[str] = None,
     token: Optional[str] = None,
     endpoint: Optional[str] = None,
+    *,
+    local_files_only: bool = False,
+    user_agent: Optional[Union[Dict, str]] = None,
+    progress_callbacks: Optional[List[Type[ProgressCallback]]] = None,
+    continue_on_error: bool = False,
+    tracker_path: Optional[str] = None,
+    retry_failed: bool = False,
+    retry_policy: Optional[DownloadRetryPolicy] = None,
+    reuse_legacy_cache: bool = True,
 ) -> str:
-    """Download a dataset repo snapshot (legacy positional-arg signature)."""
-    _warn_if_legacy_cache_detection_unavailable()
-    effective_id = dataset_id or repo_id
-    cache_dir_str = str(cache_dir) if cache_dir is not None else None
-    if local_dir is None and effective_id is not None:
-        local_dir = find_reusable_legacy_repo_dir(
-            effective_id, repo_type='dataset', cache_dir=cache_dir_str)
+    """Download a dataset repo snapshot (legacy positional-arg signature).
+
+    ``dataset_id`` takes precedence over its ``repo_id`` alias. The other
+    arguments have the same meaning as in :func:`snapshot_download`.
+
+    Returns:
+        str: The local directory of the snapshot.
+    """
     return _compat_dataset_snapshot_download(
-        dataset_id=effective_id,
+        dataset_id=dataset_id or repo_id,
         revision=revision,
-        cache_dir=cache_dir_str,
-        local_dir=local_dir,
+        cache_dir=_to_str(cache_dir),
+        local_dir=_to_str(local_dir),
         allow_file_pattern=allow_file_pattern,
         ignore_file_pattern=ignore_file_pattern,
         allow_patterns=allow_patterns,
@@ -147,4 +153,12 @@ def dataset_snapshot_download(
         cookies=cookies,
         token=token,
         endpoint=endpoint,
+        local_files_only=bool(local_files_only),
+        user_agent=user_agent,
+        progress_callbacks=progress_callbacks,
+        continue_on_error=continue_on_error,
+        tracker_path=tracker_path,
+        retry_failed=retry_failed,
+        retry_policy=retry_policy,
+        reuse_legacy_cache=reuse_legacy_cache,
     )

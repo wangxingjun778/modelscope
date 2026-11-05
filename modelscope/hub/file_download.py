@@ -1,40 +1,36 @@
-"""File download — delegates to modelscope_hub for Hub downloads, retains http_get_file for direct HTTP.
+"""File download — delegates Hub and URL downloads to ``modelscope_hub``.
 
-Hub file downloads (model_file_download, dataset_file_download) are delegated
-to modelscope_hub.compat. Direct HTTP file downloads (http_get_file,
-http_get_model_file) are retained as they serve non-Hub use cases.
+Hub single-file downloads (``model_file_download``, ``dataset_file_download``)
+and the legacy URL helpers (``http_get_file``, ``http_get_model_file``,
+``get_file_download_url``) keep their legacy signatures here, while transfer,
+resume, integrity checks and the cache layout live in ``modelscope_hub.compat``.
+This module only supplies the SDK policy inputs: the release timestamp used to
+select a model revision, the endpoint selection and the transfer constants of
+:mod:`modelscope.hub.constants`.
 """
-import copy
-import hashlib
-import io
 import os
-import tempfile
 import time
-import urllib
-import uuid
-from functools import partial
 from http.cookiejar import CookieJar
 from typing import Dict, List, Optional, Type
 
-import requests
-# --- Hub file downloads (delegated) ---
 from modelscope_hub.compat.file_download import \
     dataset_file_download as _compat_dataset_file_download
 from modelscope_hub.compat.file_download import \
+    get_file_download_url as _compat_get_file_download_url
+from modelscope_hub.compat.file_download import \
+    http_get_file as _compat_http_get_file
+from modelscope_hub.compat.file_download import \
+    http_get_model_file as _compat_http_get_model_file
+from modelscope_hub.compat.file_download import \
     model_file_download as _compat_model_file_download
-from requests.adapters import Retry
-from tqdm.auto import tqdm
 
 from modelscope.hub.constants import (API_FILE_DOWNLOAD_CHUNK_SIZE,
                                       API_FILE_DOWNLOAD_RETRY_TIMES,
                                       API_FILE_DOWNLOAD_TIMEOUT,
                                       MODELSCOPE_SDK_DEBUG)
-from modelscope.utils.logger import get_logger
-from .callback import ProgressCallback, TqdmCallback
-from .errors import FileDownloadError
-from .utils.utils import find_reusable_legacy_repo_dir, get_endpoint
-
-logger = get_logger()
+from .callback import ProgressCallback, TqdmCallback  # noqa: F401
+from .errors import FileDownloadError  # noqa: F401
+from .utils.utils import get_endpoint
 
 
 def _get_release_timestamp():
@@ -66,21 +62,22 @@ def model_file_download(
     endpoint: str = None,
     local_files_only: bool = False,
     user_agent=None,
+    progress_callbacks: Optional[List[Type[ProgressCallback]]] = None,
+    reuse_legacy_cache: bool = True,
 ) -> str:
-    """Download a single model file with release-mode revision resolution."""
-    if revision is None:
-        try:
-            from modelscope.hub.api import HubApi
-            api = HubApi(endpoint=endpoint, token=token)
-            release_ts = _get_release_timestamp()
-            detail = api.get_valid_revision_detail(
-                model_id, revision=None, release_timestamp=release_ts)
-            revision = detail.get('Revision')
-        except Exception:
-            pass
-    if local_dir is None:
-        local_dir = find_reusable_legacy_repo_dir(
-            model_id, repo_type='model', cache_dir=cache_dir)
+    """Download a single model file and return its local path.
+
+    Without an explicit ``revision``, an online download selects the model
+    revision released before this SDK version (dev-mode when
+    ``MODELSCOPE_SDK_DEBUG`` is set); offline lookups never query the hub.
+
+    Args:
+        progress_callbacks: A list of :class:`ProgressCallback` subclasses
+            (not instances), each instantiated to report download progress.
+        reuse_legacy_cache: Reuse repositories cached by older SDK versions.
+            Legacy folders are not isolated per revision; pass ``False`` to use
+            revision-specific snapshots only.
+    """
     return _compat_model_file_download(
         model_id,
         file_path,
@@ -92,6 +89,9 @@ def model_file_download(
         endpoint=endpoint,
         local_files_only=local_files_only,
         user_agent=user_agent,
+        progress_callbacks=progress_callbacks,
+        reuse_legacy_cache=reuse_legacy_cache,
+        release_timestamp=_get_release_timestamp(),
     )
 
 
@@ -107,11 +107,14 @@ def dataset_file_download(
     endpoint: str = None,
     local_files_only: bool = False,
     user_agent=None,
+    progress_callbacks: Optional[List[Type[ProgressCallback]]] = None,
+    reuse_legacy_cache: bool = True,
 ) -> str:
-    """Download a single dataset file, reusing flat/hub legacy caches when present."""
-    if local_dir is None:
-        local_dir = find_reusable_legacy_repo_dir(
-            dataset_id, repo_type='dataset', cache_dir=cache_dir)
+    """Download a single dataset file and return its local path.
+
+    ``progress_callbacks`` and ``reuse_legacy_cache`` have the same meaning as
+    in :func:`model_file_download`.
+    """
     return _compat_dataset_file_download(
         dataset_id,
         file_path,
@@ -123,10 +126,12 @@ def dataset_file_download(
         endpoint=endpoint,
         local_files_only=local_files_only,
         user_agent=user_agent,
+        progress_callbacks=progress_callbacks,
+        reuse_legacy_cache=reuse_legacy_cache,
     )
 
 
-# --- Direct HTTP downloads (retained - non-Hub API) ---
+# --- Direct HTTP downloads (any URL, no repository semantics) ---
 
 
 def get_file_download_url(model_id: str,
@@ -141,22 +146,13 @@ def get_file_download_url(model_id: str,
         model_id (str): The model_id.
         file_path (str): File path
         revision (str): File revision.
-        endpoint (str): The remote endpoint
+        endpoint (str): The remote endpoint, defaults to the SDK endpoint.
 
     Returns:
         str: The file url.
     """
-    file_path = urllib.parse.quote_plus(file_path)
-    revision = urllib.parse.quote_plus(revision)
-    download_url_template = '{endpoint}/api/v1/models/{model_id}/repo?Revision={revision}&FilePath={file_path}'
-    if not endpoint:
-        endpoint = get_endpoint()
-    return download_url_template.format(
-        endpoint=endpoint,
-        model_id=model_id,
-        revision=revision,
-        file_path=file_path,
-    )
+    return _compat_get_file_download_url(
+        model_id, file_path, revision, endpoint=endpoint or get_endpoint())
 
 
 def http_get_model_file(
@@ -188,81 +184,26 @@ def http_get_model_file(
         progress_callbacks(List[Type[ProgressCallback]], optional):
             progress callbacks to track the download progress.
 
+    Returns:
+        str: The sha256 of a file downloaded in one pass, None when the
+            download was resumed or retried.
+
     Raises:
-        FileDownloadError: File download failed.
-
+        MaxRetryError: The download kept failing after all retries.
     """
-    progress_callbacks = [] if progress_callbacks is None else progress_callbacks.copy(
+    return _compat_http_get_model_file(
+        url,
+        local_dir,
+        file_name,
+        file_size,
+        cookies,
+        headers=headers,
+        disable_tqdm=disable_tqdm,
+        progress_callbacks=progress_callbacks,
+        retry_times=API_FILE_DOWNLOAD_RETRY_TIMES,
+        timeout=API_FILE_DOWNLOAD_TIMEOUT,
+        chunk_size=API_FILE_DOWNLOAD_CHUNK_SIZE,
     )
-    if not disable_tqdm:
-        progress_callbacks.append(TqdmCallback)
-    progress_callbacks = [
-        callback(file_name, file_size) for callback in progress_callbacks
-    ]
-    get_headers = {} if headers is None else copy.deepcopy(headers)
-    get_headers['X-Request-ID'] = str(uuid.uuid4().hex)
-    temp_file_path = os.path.join(local_dir, file_name)
-    os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
-    logger.debug('downloading %s to %s', url, temp_file_path)
-    # retry sleep 0.5s, 1s, 2s, 4s
-    has_retry = False
-    hash_sha256 = hashlib.sha256()
-    retry = Retry(
-        total=API_FILE_DOWNLOAD_RETRY_TIMES,
-        backoff_factor=1,
-        allowed_methods=['GET'])
-
-    while True:
-        try:
-            if file_size == 0:
-                # Avoid empty file server request
-                with open(temp_file_path, 'w+'):
-                    for callback in progress_callbacks:
-                        callback.update(1)
-                break
-            # Determine the length of any existing partial download
-            partial_length = 0
-            # download partial, continue download
-            if os.path.exists(temp_file_path):
-                # resuming from interrupted download is also considered as retry
-                has_retry = True
-                with open(temp_file_path, 'rb') as f:
-                    partial_length = f.seek(0, io.SEEK_END)
-                    for callback in progress_callbacks:
-                        callback.update(partial_length)
-
-            # Check if download is complete
-            if partial_length >= file_size:
-                break
-            # closed range[], from 0.
-            get_headers['Range'] = 'bytes=%s-%s' % (partial_length,
-                                                    file_size - 1)
-            with open(temp_file_path, 'ab+') as f:
-                r = requests.get(
-                    url,
-                    stream=True,
-                    headers=get_headers,
-                    cookies=cookies,
-                    timeout=API_FILE_DOWNLOAD_TIMEOUT)
-                r.raise_for_status()
-                for chunk in r.iter_content(
-                        chunk_size=API_FILE_DOWNLOAD_CHUNK_SIZE):
-                    if chunk:  # filter out keep-alive new chunks
-                        for callback in progress_callbacks:
-                            callback.update(len(chunk))
-                        f.write(chunk)
-                        # hash would be discarded in retry case anyway
-                        if not has_retry:
-                            hash_sha256.update(chunk)
-            break
-        except Exception as e:  # no matter what happen, we will retry.
-            has_retry = True
-            retry = retry.increment('GET', url, error=e)
-            retry.sleep()
-    for callback in progress_callbacks:
-        callback.end()
-    # if anything went wrong, we would discard the real-time computed hash and return None
-    return None if has_retry else hash_sha256.hexdigest()
 
 
 def http_get_file(
@@ -273,6 +214,8 @@ def http_get_file(
     headers: Optional[Dict[str, str]] = None,
 ):
     """Download remote file, will retry 5 times before giving up on errors.
+
+    The file only appears in `local_dir` after the download is complete.
 
     Args:
         url(str):
@@ -287,64 +230,18 @@ def http_get_file(
             http headers to carry necessary info when requesting the remote file
 
     Raises:
-        FileDownloadError: File download failed.
-
+        MaxRetryError: The download kept failing after all retries.
     """
-    total = -1
-    temp_file_manager = partial(
-        tempfile.NamedTemporaryFile, mode='wb', dir=local_dir, delete=False)
-    get_headers = {} if headers is None else copy.deepcopy(headers)
-    get_headers['X-Request-ID'] = str(uuid.uuid4().hex)
-    with temp_file_manager() as temp_file:
-        logger.debug('downloading %s to %s', url, temp_file.name)
-        # retry sleep 0.5s, 1s, 2s, 4s
-        retry = Retry(
-            total=API_FILE_DOWNLOAD_RETRY_TIMES,
-            backoff_factor=1,
-            allowed_methods=['GET'])
-        while True:
-            try:
-                downloaded_size = temp_file.tell()
-                get_headers['Range'] = 'bytes=%d-' % downloaded_size
-                r = requests.get(
-                    url,
-                    stream=True,
-                    headers=get_headers,
-                    cookies=cookies,
-                    timeout=API_FILE_DOWNLOAD_TIMEOUT)
-                r.raise_for_status()
-                content_length = r.headers.get('Content-Length')
-                total = int(
-                    content_length) if content_length is not None else None
-                progress = tqdm(
-                    unit='B',
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    total=total,
-                    initial=downloaded_size,
-                    desc='Downloading [' + file_name + ']',
-                )
-                for chunk in r.iter_content(
-                        chunk_size=API_FILE_DOWNLOAD_CHUNK_SIZE):
-                    if chunk:  # filter out keep-alive new chunks
-                        progress.update(len(chunk))
-                        temp_file.write(chunk)
-                progress.close()
-                break
-            except (Exception) as e:  # no matter what happen, we will retry.
-                retry = retry.increment('GET', url, error=e)
-                retry.sleep()
-
-    logger.debug('storing %s in cache at %s', url, local_dir)
-    downloaded_length = os.path.getsize(temp_file.name)
-    if total != downloaded_length:
-        os.remove(temp_file.name)
-        msg = 'File %s download incomplete, content_length: %s but the \
-                    file downloaded length: %s, please download again' % (
-            file_name, total, downloaded_length)
-        logger.error(msg)
-        raise FileDownloadError(msg)
-    os.replace(temp_file.name, os.path.join(local_dir, file_name))
+    _compat_http_get_file(
+        url,
+        local_dir,
+        file_name,
+        cookies,
+        headers=headers,
+        retry_times=API_FILE_DOWNLOAD_RETRY_TIMES,
+        timeout=API_FILE_DOWNLOAD_TIMEOUT,
+        chunk_size=API_FILE_DOWNLOAD_CHUNK_SIZE,
+    )
 
 
 __all__ = [

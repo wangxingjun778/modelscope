@@ -39,8 +39,11 @@ def func_receive_dict_inputs(func):
 
 
 def get_default_modelscope_cache_dir():
-    """
-    default base dir: '~/.cache/modelscope'
+    """Get the default legacy SDK cache dir: '~/.cache/modelscope/hub'.
+
+    This legacy SDK root also hosts SDK-owned caches (AST index, plugins,
+    MsDataset files). It is not the ``modelscope_hub`` download root, see
+    :func:`get_hub_cache_root`.
     """
     default_cache_dir = os.path.expanduser(Path.home().joinpath(
         '.cache', 'modelscope', 'hub'))
@@ -48,45 +51,76 @@ def get_default_modelscope_cache_dir():
 
 
 def get_modelscope_cache_dir() -> str:
-    """Get modelscope cache dir, default location or
-       setting with MODELSCOPE_CACHE
+    """Get the legacy SDK cache dir, `MODELSCOPE_CACHE` if set, otherwise
+       '~/.cache/modelscope/hub'.
+
+    The returned root is kept for SDK-owned caches and historical callers. Do
+    not derive repository snapshot directories from it; use the return value
+    of `snapshot_download` or
+    `modelscope.hub.cache_manager.resolve_cached_snapshot` instead.
 
     Returns:
-        str: the modelscope cache root.
+        str: the legacy modelscope cache root.
     """
     return os.path.expanduser(
         os.getenv('MODELSCOPE_CACHE', get_default_modelscope_cache_dir()))
 
 
-def get_model_cache_root() -> str:
-    """Get model cache root path.
+def get_hub_cache_root() -> str:
+    """Get the active ``modelscope_hub`` cache root that downloads write to.
+
+    Precedence: the initialized process default config > `MODELSCOPE_CACHE`
+    > '~/.cache/modelscope'. Nothing is created and no credentials are
+    loaded. Repositories live in their own layout below this root, so use
+    `modelscope.hub.cache_manager.resolve_cached_snapshot` to locate a
+    specific repository revision.
 
     Returns:
-        str: the modelscope model cache root.
+        str: the active modelscope_hub cache root.
+    """
+    from modelscope_hub import get_cache_root
+    return str(get_cache_root())
+
+
+def get_model_cache_root() -> str:
+    """Get the legacy SDK model cache root: `get_modelscope_cache_dir()/models`.
+
+    Not the location of downloaded snapshots; see
+    :func:`get_modelscope_cache_dir`.
+
+    Returns:
+        str: the legacy modelscope model cache root.
     """
     return os.path.join(get_modelscope_cache_dir(), 'models')
 
 
 def get_dataset_cache_root() -> str:
-    """Get dataset raw file cache root path.
+    """Get the legacy SDK dataset raw file cache root path.
     if `MODELSCOPE_CACHE` is set, return `MODELSCOPE_CACHE/datasets`,
     else return `~/.cache/modelscope/hub/datasets`
 
+    Not the location of downloaded dataset snapshots; see
+    :func:`get_modelscope_cache_dir`.
+
     Returns:
-        str: the modelscope dataset raw file cache root.
+        str: the legacy modelscope dataset raw file cache root.
     """
     return os.path.join(get_modelscope_cache_dir(), 'datasets')
 
 
 def get_dataset_cache_dir(dataset_id: str) -> str:
-    """Get the dataset_id's path.
+    """Get the dataset_id's legacy SDK path.
        dataset_cache_root/dataset_id.
+
+    The path is derived by name only and is not where `snapshot_download`
+    stores the dataset; use
+    `modelscope.hub.cache_manager.resolve_cached_snapshot` to locate it.
 
     Args:
         dataset_id (str): The dataset id.
 
     Returns:
-        str: The dataset_id's cache root path.
+        str: The dataset_id's legacy cache path.
     """
     dataset_root = get_dataset_cache_root()
     return dataset_root if dataset_id is None else os.path.join(
@@ -95,13 +129,18 @@ def get_dataset_cache_dir(dataset_id: str) -> str:
 
 def get_model_cache_dir(model_id: str) -> str:
     """cache dir precedence:
-        function parameter > environment > ~/.cache/modelscope/hub/model_id
+        function parameter > environment > ~/.cache/modelscope/hub/models/model_id
+
+    The path is derived by name only and is not where `snapshot_download`
+    stores the model; use
+    `modelscope.hub.cache_manager.resolve_cached_snapshot` to locate it.
 
     Args:
         model_id (str, optional): The model id.
 
     Returns:
-        str: the model_id dir if model_id not None, otherwise cache root dir.
+        str: the model_id legacy dir if model_id not None, otherwise the
+            legacy model cache root dir.
     """
     root_path = get_model_cache_root()
     return root_path if model_id is None else os.path.join(

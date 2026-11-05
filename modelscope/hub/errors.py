@@ -10,6 +10,7 @@ from http import HTTPStatus
 from typing import Optional
 
 import requests
+from modelscope_hub.compat.errors import FileDownloadError  # noqa: F401
 from modelscope_hub.errors import AuthenticationError  # noqa: F401
 from modelscope_hub.errors import (APIError, CacheNotFound,
                                    CorruptedCacheException, FileIntegrityError,
@@ -40,11 +41,6 @@ class NotLoginException(AuthenticationError):
 
     def __init__(self, message: str = '', *args, **kwargs):
         super().__init__(message, **kwargs)
-
-
-class FileDownloadError(NetworkError):
-    """Legacy alias — use NetworkError for new code."""
-    pass
 
 
 class NotSupportError(NotSupportedError):

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from modelscope.fileio.file import HTTPStorage
-from modelscope.utils.file_utils import get_model_cache_root
+from modelscope.hub.cache_manager import identify_cached_repo
 from modelscope.utils.hub import snapshot_download
 from modelscope.utils.logger import get_logger
 
@@ -323,31 +323,43 @@ def generate_sd_scp_from_url(urls: Union[tuple, list]):
 
 
 def update_local_model(model_config, model_path, extra_args):
+    """Update the local model of an audio pipeline from the hub.
+
+    Nothing is done when ``extra_args['update_model']`` is falsy or
+    ``model_path`` is not an existing directory. An explicit ``update_model``
+    ('latest' or a revision) refreshes the files of ``model_path`` in place.
+    Otherwise a model directory downloaded into the cache is left as is, and
+    an external model directory only triggers a regular cache download of
+    ``model_config['model']``.
+
+    Returns:
+        The directory returned by ``snapshot_download``, or None when nothing
+        was downloaded.
+    """
     if 'update_model' in extra_args and not extra_args['update_model']:
-        return
+        return None
     model_revision = None
     if 'update_model' in extra_args:
         if extra_args['update_model'] == 'latest':
             model_revision = None
         else:
             model_revision = extra_args['update_model']
-    if model_config.__contains__('model'):
-        model_name = model_config['model']
-        dst_dir_root = get_model_cache_root()
-        if isinstance(model_path, str) and os.path.exists(
-                model_path) and not model_path.startswith(dst_dir_root):
-            try:
-                dst = os.path.join(dst_dir_root, '.cache/' + model_name)
-                dst_dir = os.path.dirname(dst)
-                os.makedirs(dst_dir, exist_ok=True)
-                if not os.path.exists(dst):
-                    os.symlink(os.path.abspath(model_path), dst)
-
-                snapshot_download(
-                    model_name,
-                    cache_dir=dst_dir_root,
-                    revision=model_revision)
-            except Exception as e:
-                logger.warning(str(e))
-    else:
+    if not model_config.__contains__('model'):
         logger.warning('Can not find model name in configuration')
+        return None
+    if not (isinstance(model_path, str) and os.path.isdir(model_path)):
+        return None
+    try:
+        if 'update_model' in extra_args:
+            local_dir = model_path
+        elif identify_cached_repo(model_path) is not None:
+            return None
+        else:
+            local_dir = None
+        return snapshot_download(
+            model_config['model'],
+            revision=model_revision,
+            local_dir=local_dir)
+    except Exception as e:
+        logger.warning(str(e))
+        return None

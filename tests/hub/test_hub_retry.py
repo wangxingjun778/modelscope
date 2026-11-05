@@ -1,4 +1,5 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
+import hashlib
 import io
 import tempfile
 import unittest
@@ -7,13 +8,15 @@ from unittest.mock import patch
 
 import json
 import requests
+from modelscope_hub import HubConfig
 from modelscope_hub.constants import REPO_TREE_PAGE_MAX_ATTEMPTS
 from urllib3.exceptions import MaxRetryError
 
 from modelscope.hub.api import HubApi
 from modelscope.hub.constants import API_FILE_DOWNLOAD_RETRY_TIMES
 from modelscope.hub.errors import ServerError
-from modelscope.hub.file_download import http_get_model_file
+from modelscope.hub.file_download import (get_file_download_url, http_get_file,
+                                          http_get_model_file)
 
 
 def _response(request, status=200, body=b''):
@@ -38,6 +41,13 @@ class HubRetryTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        cfg = HubConfig(
+            cache_dir=Path(self.temp.name) / 'cache',
+            config_dir=Path(self.temp.name) / 'auth',
+            token='')
+        patcher = patch('modelscope_hub.config._default_config', cfg)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.api = HubApi(endpoint='https://modelscope.test', token='')
         self.model_id = 'test/retry-model'
 
@@ -104,7 +114,9 @@ class HubRetryTest(unittest.TestCase):
 
                 response.iter_content = chunks
                 return response
-            return _response(request, 206, content[4:])
+            response = _response(request, 206, content[4:])
+            response.headers['Content-Range'] = 'bytes 4-15/16'
+            return response
 
         with patch('requests.sessions.Session.send', side_effect=send), \
                 patch('urllib3.util.retry.Retry.sleep'):
@@ -136,8 +148,81 @@ class HubRetryTest(unittest.TestCase):
                 disable_tqdm=True)
         self.assertEqual(transport.call_count,
                          API_FILE_DOWNLOAD_RETRY_TIMES + 1)
-        self.assertEqual((Path(self.temp.name) / 'payload.bin').stat().st_size,
-                         0)
+        self.assertFalse((Path(self.temp.name) / 'payload.bin').exists())
+
+    def test_url_helpers_keep_returns_headers_and_constant_overrides(self):
+        content = b'url data'
+        chunks = []
+        headers = {'user-agent': 'application/example'}
+
+        def send(request, **kwargs):
+            self.assertIn('invoked_by/compat', request.headers['User-Agent'])
+            self.assertIn('application/example', request.headers['User-Agent'])
+            self.assertNotIn('Authorization', request.headers)
+            self.assertNotIn('Cookie', request.headers)
+            self.assertTrue(all(value <= 7 for value in kwargs['timeout']))
+            response = _response(request, body=content)
+            response.headers.pop('Content-Length')
+            original = response.iter_content
+
+            def iter_content(chunk_size=1, **options):
+                chunks.append(chunk_size)
+                yield from original(chunk_size=chunk_size, **options)
+
+            response.iter_content = iter_content
+            return response
+
+        with patch('requests.sessions.Session.send', side_effect=send), \
+                patch('modelscope.hub.file_download.API_FILE_DOWNLOAD_TIMEOUT', 7), \
+                patch('modelscope.hub.file_download.API_FILE_DOWNLOAD_CHUNK_SIZE', 3):
+            checksum = http_get_model_file(
+                'https://external.test/video',
+                self.temp.name,
+                'known.bin',
+                len(content),
+                None,
+                headers=headers,
+                disable_tqdm=True)
+            self.assertEqual(checksum, hashlib.sha256(content).hexdigest())
+            self.assertIsNone(
+                http_get_file(
+                    'https://external.test/video',
+                    self.temp.name,
+                    'atomic.bin',
+                    None,
+                    headers=headers))
+        self.assertEqual(chunks, [3, 3])
+        self.assertEqual(headers, {'user-agent': 'application/example'})
+        self.assertEqual((Path(self.temp.name) / 'atomic.bin').read_bytes(),
+                         content)
+
+    def test_url_retry_budget_is_patchable_at_sdk_path(self):
+
+        def send(request, **kwargs):
+            return _response(request, 502, b'fixture failure')
+
+        with patch('requests.sessions.Session.send', side_effect=send) as transport, \
+                patch('urllib3.util.retry.Retry.sleep'), \
+                patch('modelscope.hub.file_download.API_FILE_DOWNLOAD_RETRY_TIMES', 1), \
+                self.assertRaises(MaxRetryError):
+            http_get_model_file(
+                'https://external.test/video',
+                self.temp.name,
+                'file.bin',
+                8,
+                None,
+                disable_tqdm=True)
+        self.assertEqual(transport.call_count, 2)
+
+    def test_download_url_keeps_sdk_endpoint_and_encoding(self):
+        self.assertEqual(
+            get_file_download_url(
+                'org/model',
+                'sub/a b.json',
+                'feature/x',
+                endpoint='https://endpoint.test'),
+            'https://endpoint.test/api/v1/models/org/model/repo?'
+            'Revision=feature%2Fx&FilePath=sub%2Fa+b.json')
 
 
 if __name__ == '__main__':
